@@ -55,7 +55,44 @@ namespace KamlaAccessibility.Gameplay
             // 5. Carried item
             if (player.IsHavingItem)
             {
-                sb.Append("Carrying an item in hands. ");
+                string heldName = null;
+                try
+                {
+                    if (player.ItemContainer != null && player.ItemContainer.childCount > 0)
+                    {
+                        var child = player.ItemContainer.GetChild(0);
+                        if (child != null)
+                        {
+                            var ip = child.GetComponent<ItemPicker>();
+                            if (ip != null)
+                            {
+                                heldName = HotspotManager.CleanItemName(ip);
+                            }
+                            else
+                            {
+                                var k = child.GetComponent<Key>();
+                                if (k != null)
+                                {
+                                    heldName = HotspotManager.CleanKeyName(k);
+                                }
+                                else
+                                {
+                                    heldName = child.gameObject.name.Replace("(Clone)", "").Replace("_", " ").Trim();
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+
+                if (!string.IsNullOrEmpty(heldName))
+                {
+                    sb.Append($"Holding {heldName} in hands. ");
+                }
+                else
+                {
+                    sb.Append("Carrying an item in hands. ");
+                }
             }
             else
             {

@@ -57,17 +57,20 @@ namespace KamlaAccessibility.Gameplay
             if (playerTransform == null) return;
 
             Vector3 playerPos = playerTransform.position;
-            float interactRadius = 2.4f;
+            float interactRadius = 3.0f;
 
             var options = new List<InteractionOption>();
+            var seenObjects = new HashSet<int>();
 
             // 1. Check ItemPickers
             var items = UnityEngine.Object.FindObjectsOfType<ItemPicker>();
             foreach (var item in items)
             {
-                if (item != null && item.gameObject.activeInHierarchy && Vector3.Distance(playerPos, item.transform.position) <= interactRadius)
+                if (item != null && item.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, item.transform.position) <= interactRadius &&
+                    seenObjects.Add(item.gameObject.GetInstanceID()))
                 {
-                    string itemName = !string.IsNullOrEmpty(item.textString) ? item.textString : item.gameObject.name;
+                    string itemName = HotspotManager.CleanItemName(item);
                     options.Add(new InteractionOption($"Pick up {itemName}", () =>
                     {
                         item.AutoPickUp();
@@ -77,27 +80,105 @@ namespace KamlaAccessibility.Gameplay
                 }
             }
 
-            // 2. Check Doors
-            var doors = UnityEngine.Object.FindObjectsOfType<Door>();
-            foreach (var door in doors)
+            // 2. Check Keys
+            var keys = UnityEngine.Object.FindObjectsOfType<Key>();
+            foreach (var k in keys)
             {
-                if (door != null && door.gameObject.activeInHierarchy && Vector3.Distance(playerPos, door.transform.position) <= interactRadius + 0.6f)
+                if (k != null && k.gameObject.activeInHierarchy && !k.HasCollectedKey &&
+                    Vector3.Distance(playerPos, k.transform.position) <= interactRadius &&
+                    seenObjects.Add(k.gameObject.GetInstanceID()))
                 {
-                    string state = door.isOpen ? "Close" : "Open";
-                    options.Add(new InteractionOption($"{state} Door", () =>
+                    string keyName = HotspotManager.CleanKeyName(k);
+                    options.Add(new InteractionOption($"Collect {keyName}", () =>
                     {
-                        door.playerDoorOpen();
+                        k.keyCollect();
                         AudioCueGenerator.PlayNavSelect();
-                        PrismSpeechProvider.Speak($"Door toggled.", true);
+                        PrismSpeechProvider.Speak($"Collected {keyName}.", true);
                     }));
                 }
             }
 
-            // 3. Check Almirahs
+            // 3. Check Doors (DoorScriptCode)
+            var scriptDoors = UnityEngine.Object.FindObjectsOfType<DoorScriptCode>();
+            foreach (var dsc in scriptDoors)
+            {
+                if (dsc != null && dsc.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, dsc.transform.position) <= interactRadius + 0.8f &&
+                    seenObjects.Add(dsc.gameObject.GetInstanceID()))
+                {
+                    string doorName = HotspotManager.CleanDoorName(dsc.gameObject);
+                    string actionVerb = dsc.open ? "Close" : "Open";
+                    options.Add(new InteractionOption($"{actionVerb} {doorName}", () =>
+                    {
+                        dsc.playerDoorOpen();
+                        AudioCueGenerator.PlayNavSelect();
+                        PrismSpeechProvider.Speak($"{doorName} toggled.", true);
+                    }));
+                }
+            }
+
+            // 4. Check Standard Doors (Door)
+            var doors = UnityEngine.Object.FindObjectsOfType<Door>();
+            foreach (var door in doors)
+            {
+                if (door != null && door.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, door.transform.position) <= interactRadius + 0.8f &&
+                    seenObjects.Add(door.gameObject.GetInstanceID()))
+                {
+                    string doorName = HotspotManager.CleanDoorName(door.gameObject);
+                    string actionVerb = door.isOpen ? "Close" : "Open";
+                    options.Add(new InteractionOption($"{actionVerb} {doorName}", () =>
+                    {
+                        door.playerDoorOpen();
+                        AudioCueGenerator.PlayNavSelect();
+                        PrismSpeechProvider.Speak($"{doorName} toggled.", true);
+                    }));
+                }
+            }
+
+            // 5. Check Locked Doors (DoorLocked)
+            var lockedDoors = UnityEngine.Object.FindObjectsOfType<DoorLocked>();
+            foreach (var dl in lockedDoors)
+            {
+                if (dl != null && dl.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, dl.transform.position) <= interactRadius + 0.8f &&
+                    seenObjects.Add(dl.gameObject.GetInstanceID()))
+                {
+                    string doorName = HotspotManager.CleanDoorName(dl.gameObject);
+                    options.Add(new InteractionOption($"Try to open {doorName}", () =>
+                    {
+                        dl.playerDoorOpen();
+                        AudioCueGenerator.PlayNavSelect();
+                        bool unlocked = dl.isUnlocked || dl.IsDoorUnlocked;
+                        PrismSpeechProvider.Speak(unlocked ? $"{doorName} unlocked." : $"{doorName} is locked.", true);
+                    }));
+                }
+            }
+
+            // 6. Check Intro Event Doors
+            var introDoors = UnityEngine.Object.FindObjectsOfType<IntroEventDoor>();
+            foreach (var id in introDoors)
+            {
+                if (id != null && id.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, id.transform.position) <= interactRadius + 0.8f &&
+                    seenObjects.Add(id.gameObject.GetInstanceID()))
+                {
+                    options.Add(new InteractionOption("Open Entrance Gate", () =>
+                    {
+                        id.playerDoorOpen();
+                        AudioCueGenerator.PlayNavSelect();
+                        PrismSpeechProvider.Speak("Entrance gate toggled.", true);
+                    }));
+                }
+            }
+
+            // 7. Check Almirahs
             var almirahs = UnityEngine.Object.FindObjectsOfType<OpenableAlmirah>();
             foreach (var alm in almirahs)
             {
-                if (alm != null && alm.gameObject.activeInHierarchy && Vector3.Distance(playerPos, alm.transform.position) <= interactRadius)
+                if (alm != null && alm.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, alm.transform.position) <= interactRadius &&
+                    seenObjects.Add(alm.gameObject.GetInstanceID()))
                 {
                     string state = alm.isOpen ? "Close" : "Open";
                     options.Add(new InteractionOption($"{state} Almirah", () =>
@@ -111,11 +192,32 @@ namespace KamlaAccessibility.Gameplay
                 }
             }
 
-            // 4. Check Table Drawers
+            // 8. Check Chests
+            var chests = UnityEngine.Object.FindObjectsOfType<OpenableChest>();
+            foreach (var c in chests)
+            {
+                if (c != null && c.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, c.transform.position) <= interactRadius &&
+                    seenObjects.Add(c.gameObject.GetInstanceID()))
+                {
+                    string state = c.isOpen ? "Close" : "Open";
+                    options.Add(new InteractionOption($"{state} Chest", () =>
+                    {
+                        c.isOpen = !c.isOpen;
+                        if (c.anim != null) c.anim.SetTrigger(c.isOpen ? "Open" : "Close");
+                        AudioCueGenerator.PlayNavSelect();
+                        PrismSpeechProvider.Speak($"Chest {(c.isOpen ? "opened" : "closed")}.", true);
+                    }));
+                }
+            }
+
+            // 9. Check Table Drawers
             var drawers = UnityEngine.Object.FindObjectsOfType<TableDrawer>();
             foreach (var dr in drawers)
             {
-                if (dr != null && dr.gameObject.activeInHierarchy && Vector3.Distance(playerPos, dr.transform.position) <= interactRadius)
+                if (dr != null && dr.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, dr.transform.position) <= interactRadius &&
+                    seenObjects.Add(dr.gameObject.GetInstanceID()))
                 {
                     options.Add(new InteractionOption("Toggle Drawer", () =>
                     {
@@ -137,7 +239,7 @@ namespace KamlaAccessibility.Gameplay
             if (options.Count == 1)
             {
                 // Execute directly!
-                options[0].Action.Invoke();
+                options[0].Action?.Invoke();
                 return;
             }
 

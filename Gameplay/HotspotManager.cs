@@ -36,6 +36,13 @@ namespace KamlaAccessibility.Gameplay
         {
             if (GameObject == null) return "Gone";
 
+            // 1. Doors
+            var dsc = GameObject.GetComponent<DoorScriptCode>();
+            if (dsc != null)
+            {
+                return dsc.open ? "Open" : "Closed";
+            }
+
             var door = GameObject.GetComponent<Door>();
             if (door != null)
             {
@@ -45,13 +52,46 @@ namespace KamlaAccessibility.Gameplay
             var lockedDoor = GameObject.GetComponent<DoorLocked>();
             if (lockedDoor != null)
             {
-                return "Locked";
+                bool unlocked = lockedDoor.isUnlocked || lockedDoor.IsDoorUnlocked;
+                return unlocked ? "Unlocked" : "Locked";
             }
 
+            var metalDoor = GameObject.GetComponent<MetalDoor>();
+            if (metalDoor != null)
+            {
+                return metalDoor.IsUnlocked ? "Unlocked" : "Locked";
+            }
+
+            var metalLocked = GameObject.GetComponent<MetalLockedDoor>();
+            if (metalLocked != null)
+            {
+                return "Locked Metal Door";
+            }
+
+            var introDoor = GameObject.GetComponent<IntroEventDoor>();
+            if (introDoor != null)
+            {
+                return introDoor.isOpened ? "Open" : "Closed";
+            }
+
+            // 2. Containers
             var almirah = GameObject.GetComponent<OpenableAlmirah>();
             if (almirah != null)
             {
                 return almirah.isOpen ? "Open" : "Closed";
+            }
+
+            var chest = GameObject.GetComponent<OpenableChest>();
+            if (chest != null)
+            {
+                return chest.isOpen ? "Open" : "Closed";
+            }
+
+            // 3. Items and Keys
+            var key = GameObject.GetComponent<Key>();
+            if (key != null)
+            {
+                return key.HasCollectedKey ? "Collected" : "Ready to pick up";
             }
 
             var item = GameObject.GetComponent<ItemPicker>();
@@ -60,6 +100,13 @@ namespace KamlaAccessibility.Gameplay
                 return "Ready to pick up";
             }
 
+            var courtItem = GameObject.GetComponent<ItemInCourtyard>();
+            if (courtItem != null)
+            {
+                return courtItem.isItemPlaced ? "Placed on Altar" : "Ready for Ritual";
+            }
+
+            // 4. Enemy
             var enemy = GameObject.GetComponent<Enemy>();
             if (enemy != null)
             {
@@ -257,7 +304,7 @@ namespace KamlaAccessibility.Gameplay
                 playerTransform.position += new Vector3(moveDir.x, 0, moveDir.z);
             }
 
-            // Procedural footstep audio tick
+            // Footstep timer
             _footstepTimer += Time.deltaTime;
             if (_footstepTimer >= 0.45f)
             {
@@ -282,73 +329,167 @@ namespace KamlaAccessibility.Gameplay
             _currentItems.Clear();
             _currentItemIndex = 0;
             Vector3 playerPos = playerTransform != null ? playerTransform.position : Vector3.zero;
+            var seenObjects = new HashSet<int>();
 
             switch (category)
             {
                 case HotspotCategory.Doors:
+                    // 1. DoorScriptCode (Primary Haveli doors)
+                    var scriptDoors = UnityEngine.Object.FindObjectsOfType<DoorScriptCode>();
+                    foreach (var d in scriptDoors)
+                    {
+                        if (d != null && d.gameObject.activeInHierarchy && seenObjects.Add(d.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(d.gameObject, CleanDoorName(d.gameObject), HotspotCategory.Doors));
+                    }
+
+                    // 2. Door
                     var doors = UnityEngine.Object.FindObjectsOfType<Door>();
                     foreach (var d in doors)
-                        if (d != null && d.gameObject.activeInHierarchy)
-                            _currentItems.Add(new HotspotItem(d.gameObject, CleanDoorName(d.gameObject.name), HotspotCategory.Doors));
+                    {
+                        if (d != null && d.gameObject.activeInHierarchy && seenObjects.Add(d.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(d.gameObject, CleanDoorName(d.gameObject), HotspotCategory.Doors));
+                    }
 
+                    // 3. DoorLocked
                     var lockedDoors = UnityEngine.Object.FindObjectsOfType<DoorLocked>();
                     foreach (var ld in lockedDoors)
-                        if (ld != null && ld.gameObject.activeInHierarchy)
-                            _currentItems.Add(new HotspotItem(ld.gameObject, "Locked Haveli Door", HotspotCategory.Doors));
+                    {
+                        if (ld != null && ld.gameObject.activeInHierarchy && seenObjects.Add(ld.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(ld.gameObject, "Locked " + CleanDoorName(ld.gameObject), HotspotCategory.Doors));
+                    }
+
+                    // 4. MetalDoor
+                    var metalDoors = UnityEngine.Object.FindObjectsOfType<MetalDoor>();
+                    foreach (var md in metalDoors)
+                    {
+                        if (md != null && md.gameObject.activeInHierarchy && seenObjects.Add(md.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(md.gameObject, "Metal Door", HotspotCategory.Doors));
+                    }
+
+                    // 5. MetalLockedDoor
+                    var metalLocked = UnityEngine.Object.FindObjectsOfType<MetalLockedDoor>();
+                    foreach (var mld in metalLocked)
+                    {
+                        if (mld != null && mld.gameObject.activeInHierarchy && seenObjects.Add(mld.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(mld.gameObject, "Locked Metal Door", HotspotCategory.Doors));
+                    }
+
+                    // 6. OuterAreaDoor
+                    var outerDoors = UnityEngine.Object.FindObjectsOfType<OuterAreaDoor>();
+                    foreach (var od in outerDoors)
+                    {
+                        if (od != null && od.gameObject.activeInHierarchy && seenObjects.Add(od.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(od.gameObject, "Outer Area Gate", HotspotCategory.Doors));
+                    }
+
+                    // 7. IntroEventDoor
+                    var introDoors = UnityEngine.Object.FindObjectsOfType<IntroEventDoor>();
+                    foreach (var id in introDoors)
+                    {
+                        if (id != null && id.gameObject.activeInHierarchy && seenObjects.Add(id.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(id.gameObject, "Entrance Gate", HotspotCategory.Doors));
+                    }
                     break;
 
                 case HotspotCategory.Items:
+                    // 1. ItemPicker (Ritual items, tools, potions, matches, etc.)
                     var items = UnityEngine.Object.FindObjectsOfType<ItemPicker>();
                     foreach (var it in items)
-                        if (it != null && it.gameObject.activeInHierarchy)
+                    {
+                        if (it != null && it.gameObject.activeInHierarchy && seenObjects.Add(it.gameObject.GetInstanceID()))
                             _currentItems.Add(new HotspotItem(it.gameObject, CleanItemName(it), HotspotCategory.Items));
+                    }
+
+                    // 2. Key (Haveli keys)
+                    var keys = UnityEngine.Object.FindObjectsOfType<Key>();
+                    foreach (var k in keys)
+                    {
+                        if (k != null && k.gameObject.activeInHierarchy && !k.HasCollectedKey && seenObjects.Add(k.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(k.gameObject, CleanKeyName(k), HotspotCategory.Items));
+                    }
+
+                    // 3. ItemInCourtyard
+                    var courtItems = UnityEngine.Object.FindObjectsOfType<ItemInCourtyard>();
+                    foreach (var ci in courtItems)
+                    {
+                        if (ci != null && ci.gameObject.activeInHierarchy && seenObjects.Add(ci.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(ci.gameObject, FormatRecipeItem(ci.MyItem), HotspotCategory.Items));
+                    }
                     break;
 
                 case HotspotCategory.Containers:
                     var almirahs = UnityEngine.Object.FindObjectsOfType<OpenableAlmirah>();
                     foreach (var a in almirahs)
-                        if (a != null && a.gameObject.activeInHierarchy)
+                    {
+                        if (a != null && a.gameObject.activeInHierarchy && seenObjects.Add(a.gameObject.GetInstanceID()))
                             _currentItems.Add(new HotspotItem(a.gameObject, "Haveli Almirah", HotspotCategory.Containers));
+                    }
+
+                    var chests = UnityEngine.Object.FindObjectsOfType<OpenableChest>();
+                    foreach (var c in chests)
+                    {
+                        if (c != null && c.gameObject.activeInHierarchy && seenObjects.Add(c.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(c.gameObject, "Haveli Chest", HotspotCategory.Containers));
+                    }
 
                     var drawers = UnityEngine.Object.FindObjectsOfType<TableDrawer>();
                     foreach (var dr in drawers)
-                        if (dr != null && dr.gameObject.activeInHierarchy)
+                    {
+                        if (dr != null && dr.gameObject.activeInHierarchy && seenObjects.Add(dr.gameObject.GetInstanceID()))
                             _currentItems.Add(new HotspotItem(dr.gameObject, "Table Drawer", HotspotCategory.Containers));
+                    }
+
+                    var suitcases = UnityEngine.Object.FindObjectsOfType<Suitcase>();
+                    foreach (var sc in suitcases)
+                    {
+                        if (sc != null && sc.gameObject.activeInHierarchy && seenObjects.Add(sc.gameObject.GetInstanceID()))
+                            _currentItems.Add(new HotspotItem(sc.gameObject, "Combination Suitcase", HotspotCategory.Containers));
+                    }
                     break;
 
                 case HotspotCategory.RitualAndPuzzles:
                     var havan = GameObject.Find("PlaceCircleCourtyard") ?? GameObject.Find("HavanParticleSystem") ?? GameObject.Find("CourtyardMechanic");
-                    if (havan != null) _currentItems.Add(new HotspotItem(havan, "Courtyard Havan Altar", HotspotCategory.RitualAndPuzzles));
+                    if (havan != null && seenObjects.Add(havan.GetInstanceID()))
+                        _currentItems.Add(new HotspotItem(havan, "Courtyard Havan Altar", HotspotCategory.RitualAndPuzzles));
 
                     var ganesh = GameObject.Find("GaneshMurtiManager") ?? GameObject.Find("GaneshMurti");
-                    if (ganesh != null) _currentItems.Add(new HotspotItem(ganesh, "Ganesh Idol", HotspotCategory.RitualAndPuzzles));
+                    if (ganesh != null && seenObjects.Add(ganesh.GetInstanceID()))
+                        _currentItems.Add(new HotspotItem(ganesh, "Ganesh Idol", HotspotCategory.RitualAndPuzzles));
 
                     var bells = UnityEngine.Object.FindObjectsOfType<HangingBell>();
                     foreach (var b in bells)
-                        if (b != null && b.gameObject.activeInHierarchy)
+                    {
+                        if (b != null && b.gameObject.activeInHierarchy && seenObjects.Add(b.gameObject.GetInstanceID()))
                             _currentItems.Add(new HotspotItem(b.gameObject, "Temple Bell", HotspotCategory.RitualAndPuzzles));
+                    }
 
                     var bricks = UnityEngine.Object.FindObjectsOfType<PushableBrick>();
                     foreach (var br in bricks)
-                        if (br != null && br.gameObject.activeInHierarchy)
+                    {
+                        if (br != null && br.gameObject.activeInHierarchy && seenObjects.Add(br.gameObject.GetInstanceID()))
                             _currentItems.Add(new HotspotItem(br.gameObject, "Puzzle Brick", HotspotCategory.RitualAndPuzzles));
+                    }
                     break;
 
                 case HotspotCategory.HidingSpots:
                     var hides = UnityEngine.Object.FindObjectsOfType<HideDetectionCollider>();
                     foreach (var h in hides)
-                        if (h != null && h.gameObject.activeInHierarchy)
+                    {
+                        if (h != null && h.gameObject.activeInHierarchy && seenObjects.Add(h.gameObject.GetInstanceID()))
                             _currentItems.Add(new HotspotItem(h.gameObject, "Hiding Spot", HotspotCategory.HidingSpots));
+                    }
 
                     var almHides = UnityEngine.Object.FindObjectsOfType<OpenableAlmirah>();
                     foreach (var al in almHides)
-                        if (al != null && al.gameObject.activeInHierarchy)
+                    {
+                        if (al != null && al.gameObject.activeInHierarchy && seenObjects.Add(al.gameObject.GetInstanceID()))
                             _currentItems.Add(new HotspotItem(al.gameObject, "Wardrobe Hiding Spot", HotspotCategory.HidingSpots));
+                    }
                     break;
 
                 case HotspotCategory.Kamla:
                     var enemy = UnityEngine.Object.FindObjectOfType<Enemy>();
-                    if (enemy != null && enemy.gameObject.activeInHierarchy)
+                    if (enemy != null && enemy.gameObject.activeInHierarchy && seenObjects.Add(enemy.gameObject.GetInstanceID()))
                         _currentItems.Add(new HotspotItem(enemy.gameObject, "Kamla", HotspotCategory.Kamla));
                     break;
 
@@ -389,22 +530,83 @@ namespace KamlaAccessibility.Gameplay
             }
         }
 
-        private static string CleanItemName(ItemPicker it)
+        public static string CleanItemName(ItemPicker it)
         {
             if (it == null) return "Item";
-            if (!string.IsNullOrEmpty(it.textString)) return it.textString.Trim();
-            if (!string.IsNullOrEmpty(it.headhunted)) return it.headhunted.Trim();
-            return it.gameObject.name.Replace("(Clone)", "").Replace("_", " ").Trim();
+
+            // 1. Check ItemData ScriptableObject
+            try
+            {
+                if (it.myItemData != null)
+                {
+                    if (!string.IsNullOrEmpty(it.myItemData.ItemNameForDisplay))
+                        return it.myItemData.ItemNameForDisplay.Trim();
+                    if (!string.IsNullOrEmpty(it.myItemData.ItemName))
+                        return it.myItemData.ItemName.Trim();
+                }
+            }
+            catch { }
+
+            // 2. Check RECIPE_ITEM enum
+            try
+            {
+                if (it.MyItem != GlobalConstants.RECIPE_ITEM.None)
+                {
+                    return FormatRecipeItem(it.MyItem);
+                }
+            }
+            catch { }
+
+            // 3. Check headhunted string if it contains a valid name (not the warning text)
+            if (!string.IsNullOrEmpty(it.headhunted) &&
+                !it.headhunted.Contains("Holding", StringComparison.OrdinalIgnoreCase))
+            {
+                return it.headhunted.Trim();
+            }
+
+            // 4. Fallback to cleaned GameObject name (e.g. "Key_Room1 (Clone)" -> "Key Room 1")
+            string raw = it.gameObject.name.Replace("(Clone)", "").Replace("_", " ").Trim();
+            return string.IsNullOrEmpty(raw) ? "Haveli Item" : raw;
         }
 
-        private static string CleanDoorName(string raw)
+        public static string CleanKeyName(Key k)
         {
-            if (string.IsNullOrEmpty(raw)) return "Door";
-            raw = raw.Replace("(Clone)", "").Replace("_", " ").Trim();
+            if (k == null) return "Key";
+            if (!string.IsNullOrEmpty(k.keyName)) return k.keyName.Trim();
+            string raw = k.gameObject.name.Replace("(Clone)", "").Replace("_", " ").Trim();
+            return string.IsNullOrEmpty(raw) ? "Haveli Key" : raw;
+        }
+
+        public static string CleanDoorName(GameObject go)
+        {
+            if (go == null) return "Haveli Door";
+            string raw = go.name.Replace("(Clone)", "").Replace("_", " ").Trim();
             if (raw.IndexOf("Creepy", StringComparison.OrdinalIgnoreCase) >= 0) return "Creepy Door";
             if (raw.IndexOf("Metal", StringComparison.OrdinalIgnoreCase) >= 0) return "Metal Door";
-            if (raw.IndexOf("Main", StringComparison.OrdinalIgnoreCase) >= 0) return "Main Haveli Gate";
-            return "Haveli Door";
+            if (raw.IndexOf("Main", StringComparison.OrdinalIgnoreCase) >= 0 || raw.IndexOf("Outer", StringComparison.OrdinalIgnoreCase) >= 0) return "Main Haveli Gate";
+            if (raw.IndexOf("Mandir", StringComparison.OrdinalIgnoreCase) >= 0 || raw.IndexOf("Temple", StringComparison.OrdinalIgnoreCase) >= 0) return "Mandir Door";
+            if (raw.IndexOf("Courtyard", StringComparison.OrdinalIgnoreCase) >= 0) return "Courtyard Door";
+            if (raw.IndexOf("Double", StringComparison.OrdinalIgnoreCase) >= 0) return "Double Door";
+            if (raw.IndexOf("Room", StringComparison.OrdinalIgnoreCase) >= 0) return raw;
+            return string.IsNullOrEmpty(raw) ? "Haveli Door" : raw;
+        }
+
+        public static string FormatRecipeItem(GlobalConstants.RECIPE_ITEM item)
+        {
+            switch (item)
+            {
+                case GlobalConstants.RECIPE_ITEM.Camphor: return "Camphor (Kapoor)";
+                case GlobalConstants.RECIPE_ITEM.SaltBowl: return "Salt Bowl";
+                case GlobalConstants.RECIPE_ITEM.Thali: return "Puja Thali";
+                case GlobalConstants.RECIPE_ITEM.Chalisa: return "Hanuman Chalisa";
+                case GlobalConstants.RECIPE_ITEM.Gangajal: return "Holy Water (Gangajal)";
+                case GlobalConstants.RECIPE_ITEM.KalashPot: return "Kalash Pot";
+                case GlobalConstants.RECIPE_ITEM.Ganesh: return "Ganesh Idol";
+                case GlobalConstants.RECIPE_ITEM.NazarBattu: return "Nazar Battu";
+                case GlobalConstants.RECIPE_ITEM.Smudge: return "Smudge Stick (Dhoop)";
+                case GlobalConstants.RECIPE_ITEM.Umbrella: return "Umbrella";
+                default: return item.ToString();
+            }
         }
 
         private static int GetClockDirection(Vector3 forward, Vector3 toTarget)
