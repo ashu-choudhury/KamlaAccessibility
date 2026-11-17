@@ -1,59 +1,46 @@
 using System;
-using UnityEngine;
+using System.Runtime.InteropServices;
+using KamlaAccessibility.Core;
 
 namespace KamlaAccessibility.Audio
 {
     /// <summary>
-    /// Generates procedural audio cues (UI ticks, radar beeps, boundary alerts)
-    /// directly using Unity's audio engine without needing external sound assets.
+    /// Generates instant, low-latency audio feedback chimes using Windows native MessageBeep,
+    /// completely decoupled from Unity audio buffers and IL2CPP marshaling.
     /// </summary>
     public static class AudioCueGenerator
     {
-        private static AudioSource _audioSource;
+        [DllImport("user32.dll")]
+        private static extern bool MessageBeep(uint uType);
 
-        public static void Initialize(GameObject parent)
+        public static void PlayNavTick()
         {
-            if (_audioSource == null && parent != null)
-            {
-                _audioSource = parent.AddComponent<AudioSource>();
-                _audioSource.playOnAwake = false;
-                _audioSource.spatialBlend = 0f; // 2D sound for UI
-                _audioSource.volume = 0.6f;
-            }
+            if (!ModConfig.EnableAudioCues) return;
+            try { MessageBeep(0x00); } catch { }
         }
 
-        /// <summary>
-        /// Plays a short clean sine tone at a given frequency and duration.
-        /// </summary>
-        public static void PlayTone(float frequency = 440f, float duration = 0.08f, float volume = 0.5f)
+        public static void PlayNavSelect()
         {
-            if (_audioSource == null) return;
-
-            try
-            {
-                int sampleRate = 44100;
-                int samplesCount = (int)(sampleRate * duration);
-                float[] samples = new float[samplesCount];
-
-                for (int i = 0; i < samplesCount; i++)
-                {
-                    float t = (float)i / sampleRate;
-                    // Envelope: fast attack, linear decay to avoid audio click
-                    float envelope = 1f - ((float)i / samplesCount);
-                    samples[i] = Mathf.Sin(2f * Mathf.PI * frequency * t) * envelope * volume;
-                }
-
-                AudioClip clip = AudioClip.Create("CueTone", samplesCount, 1, sampleRate, false);
-                clip.SetData(samples, 0);
-                _audioSource.PlayOneShot(clip);
-            }
-            catch { }
+            if (!ModConfig.EnableAudioCues) return;
+            try { MessageBeep(0x40); } catch { } // Asterisk / Info
         }
 
-        public static void PlayNavTick() => PlayTone(600f, 0.04f, 0.4f);
-        public static void PlayNavSelect() => PlayTone(880f, 0.08f, 0.6f);
-        public static void PlayBoundaryHit() => PlayTone(220f, 0.07f, 0.5f);
-        public static void PlayRadarBeep(float pitchFactor = 1.0f) => PlayTone(500f * pitchFactor, 0.06f, 0.5f);
-        public static void PlayObjectivePing() => PlayTone(1046.5f, 0.15f, 0.7f); // High C
+        public static void PlayBoundaryHit()
+        {
+            if (!ModConfig.EnableAudioCues) return;
+            try { MessageBeep(0x10); } catch { } // Hand / Stop
+        }
+
+        public static void PlayRadarBeep()
+        {
+            if (!ModConfig.EnableAudioCues) return;
+            try { MessageBeep(0x00); } catch { }
+        }
+
+        public static void PlayObjectivePing()
+        {
+            if (!ModConfig.EnableAudioCues) return;
+            try { MessageBeep(0x40); } catch { }
+        }
     }
 }

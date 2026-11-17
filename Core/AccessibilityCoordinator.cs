@@ -1,6 +1,6 @@
 using System;
 using UnityEngine;
-using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 using Il2Cpp;
 using KamlaAccessibility.Speech;
 using KamlaAccessibility.Audio;
@@ -11,58 +11,85 @@ using MelonLoader;
 namespace KamlaAccessibility.Core
 {
     /// <summary>
-    /// Central coordinator for UI navigation, Hotspot browsing, auto-walk,
-    /// contextual Enter interaction, emergency hiding, and player status reporting.
+    /// Pure C# central coordinator driven directly by MelonMod.OnUpdate(),
+    /// immune to Unity scene unloads and IL2CPP domain reset quirks.
     /// </summary>
-    public class AccessibilityManager : MonoBehaviour
+    public class AccessibilityCoordinator
     {
-        public static AccessibilityManager Instance { get; private set; }
+        public static AccessibilityCoordinator Instance { get; private set; }
 
         private readonly UIAccessibilityController _uiController = new UIAccessibilityController();
         private readonly HotspotManager _hotspotManager = new HotspotManager();
         private readonly InteractionManager _interactionManager = new InteractionManager();
         private readonly InteractionDescriber _interactionDescriber = new InteractionDescriber();
 
-        public AccessibilityManager(IntPtr ptr) : base(ptr) { }
+        private string _lastSceneName = string.Empty;
 
-        public static void EnsureInstance()
+        public static void Initialize()
         {
             if (Instance == null)
             {
-                var go = new GameObject("KamlaAccessibilityHost");
-                UnityEngine.Object.DontDestroyOnLoad(go);
-                Instance = go.AddComponent<AccessibilityManager>();
-                AudioCueGenerator.Initialize(go);
-                AudioBeacon.EnsureBeacon(go);
-                MelonLogger.Msg("[KamlaAccessibility] AccessibilityManager component attached to host.");
+                Instance = new AccessibilityCoordinator();
+                MelonLogger.Msg("[AccessibilityCoordinator] Initialized pure C# coordinator.");
             }
         }
 
-        private void Start()
+        public void Update()
         {
-            AudioCueGenerator.Initialize(gameObject);
+            try
+            {
+                // 1. Check Scene changes
+                CheckSceneChange();
+
+                // 2. Global Hotkeys
+                HandleGlobalHotkeys();
+
+                // 3. UI Navigation (Menus, Pause, Settings)
+                _uiController.Update();
+
+                // 4. Gameplay: Hotspots, Auto-walk, Interaction, and Crosshair Look
+                UpdateGameplay();
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[AccessibilityCoordinator.Update] {ex.Message}");
+            }
         }
 
-        private void Update()
+        private void CheckSceneChange()
         {
-            HandleGlobalHotkeys();
+            try
+            {
+                string activeScene = SceneManager.GetActiveScene().name;
+                if (!string.IsNullOrEmpty(activeScene) && activeScene != _lastSceneName)
+                {
+                    _lastSceneName = activeScene;
+                    OnSceneChanged(activeScene);
+                }
+            }
+            catch { }
+        }
 
-            // 1. Menu and UI Navigation
-            _uiController.Update();
+        public void OnSceneChanged(string sceneName)
+        {
+            MelonLogger.Msg($"[AccessibilityCoordinator] Scene changed: '{sceneName}'");
 
-            // 2. Gameplay Navigation and Interactions (when not in a numbered action menu)
-            var player = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
-            Transform playerTransform = player != null ? player.transform : (Camera.main != null ? Camera.main.transform : transform);
-            CharacterController controller = player != null ? player.Controller : null;
+            string friendlyName = sceneName;
+            if (sceneName.IndexOf("Menu", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                sceneName.IndexOf("Title", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                sceneName.IndexOf("Start", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                friendlyName = "Main Menu";
+            }
+            else if (sceneName.IndexOf("Game", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     sceneName.IndexOf("Haveli", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     sceneName.IndexOf("Level", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                friendlyName = "The Haveli";
+            }
 
-            // Handle Hotspots & Auto-walk (Home, End, PageUp, PageDown, Delete)
-            _hotspotManager.HandleInput(playerTransform, controller);
-
-            // Handle Contextual Activation & Menus (Enter)
-            _interactionManager.Update(playerTransform);
-
-            // Handle Crosshair Look Narration
-            UpdateCrosshairLook();
+            AudioCueGenerator.PlayNavSelect();
+            PrismSpeechProvider.Speak($"{friendlyName} loaded.", true);
         }
 
         private void HandleGlobalHotkeys()
@@ -97,7 +124,7 @@ namespace KamlaAccessibility.Core
             if (Input.GetKeyDown(KeyCode.Keypad0) || ((Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt)) && Input.GetKeyDown(KeyCode.F)))
             {
                 var player = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
-                Transform pt = player != null ? player.transform : (Camera.main != null ? Camera.main.transform : transform);
+                Transform pt = player != null ? player.transform : (Camera.main != null ? Camera.main.transform : null);
                 WorldRadar.ScanNearby(pt);
             }
 
@@ -105,7 +132,7 @@ namespace KamlaAccessibility.Core
             if (Input.GetKeyDown(KeyCode.Keypad8) || ((Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt)) && Input.GetKeyDown(KeyCode.C)))
             {
                 var player = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
-                Transform pt = player != null ? player.transform : (Camera.main != null ? Camera.main.transform : transform);
+                Transform pt = player != null ? player.transform : (Camera.main != null ? Camera.main.transform : null);
                 WorldRadar.AnnounceCompass(pt);
             }
 
@@ -119,6 +146,25 @@ namespace KamlaAccessibility.Core
             if (Input.GetKeyDown(KeyCode.F1))
             {
                 SpeakHelp();
+            }
+        }
+
+        private void UpdateGameplay()
+        {
+            var player = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
+            Transform playerTransform = player != null ? player.transform : (Camera.main != null ? Camera.main.transform : null);
+            CharacterController controller = player != null ? player.Controller : null;
+
+            if (playerTransform != null)
+            {
+                // Handle Hotspots & Auto-walk (Home, End, PageUp, PageDown, Delete)
+                _hotspotManager.HandleInput(playerTransform, controller);
+
+                // Handle Contextual Activation & Menus (Enter)
+                _interactionManager.Update(playerTransform);
+
+                // Handle Crosshair Look Narration
+                UpdateCrosshairLook();
             }
         }
 
