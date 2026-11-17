@@ -98,6 +98,41 @@ namespace KamlaAccessibility.Gameplay
                 }
             }
 
+            // 2b. Check Books
+            var books = UnityEngine.Object.FindObjectsOfType<Book>();
+            foreach (var b in books)
+            {
+                if (b != null && b.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, b.transform.position) <= interactRadius &&
+                    seenObjects.Add(b.gameObject.GetInstanceID()))
+                {
+                    options.Add(new InteractionOption("Inspect Ancient Prayer Book", () =>
+                    {
+                        b.HasInteractedWithBook = true;
+                        AudioCueGenerator.PlayNavSelect();
+                        PrismSpeechProvider.Speak("Ancient Prayer Book inspected.", true);
+                    }));
+                }
+            }
+
+            // 2c. Check Notes
+            var notes = UnityEngine.Object.FindObjectsOfType<Note>();
+            foreach (var n in notes)
+            {
+                if (n != null && n.gameObject.activeInHierarchy &&
+                    Vector3.Distance(playerPos, n.transform.position) <= interactRadius &&
+                    seenObjects.Add(n.gameObject.GetInstanceID()))
+                {
+                    options.Add(new InteractionOption("Read Haveli Note", () =>
+                    {
+                        string noteText = !string.IsNullOrEmpty(n.noteString) ? n.noteString : "Blank Note";
+                        n.isReadOnce = true;
+                        AudioCueGenerator.PlayNavSelect();
+                        PrismSpeechProvider.Speak($"Note: {noteText}", true);
+                    }));
+                }
+            }
+
             // 3. Check Doors (DoorScriptCode)
             var scriptDoors = UnityEngine.Object.FindObjectsOfType<DoorScriptCode>();
             foreach (var dsc in scriptDoors)

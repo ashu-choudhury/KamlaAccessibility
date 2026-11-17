@@ -158,7 +158,7 @@ namespace KamlaAccessibility.Core
             if (playerTransform != null)
             {
                 // Handle Hotspots & Auto-walk (Home, End, PageUp, PageDown, Delete)
-                _hotspotManager.HandleInput(playerTransform, controller);
+                _hotspotManager.HandleInput(player);
 
                 // Handle Contextual Activation & Menus (Enter)
                 _interactionManager.Update(playerTransform);
