@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using MelonLoader;
+using KamlaAccessibility.Core;
 
 namespace KamlaAccessibility.Speech
 {
@@ -108,7 +109,9 @@ namespace KamlaAccessibility.Speech
         /// <param name="interrupt">If true, interrupts any current speech</param>
         public static void Speak(string text, bool interrupt = true)
         {
-            if (string.IsNullOrWhiteSpace(text)) return;
+            bool enableSpeech = ModConfig.EnableSpeech;
+            bool enableBraille = ModConfig.EnableBraille;
+            if (string.IsNullOrWhiteSpace(text) || (!enableSpeech && !enableBraille)) return;
 
             lock (_lock)
             {
@@ -124,11 +127,18 @@ namespace KamlaAccessibility.Speech
                     try
                     {
                         byte[] utf8Bytes = Encoding.UTF8.GetBytes(text + "\0");
-                        int result = PrismNative.prism_backend_output(_backend, utf8Bytes, interrupt);
-                        if (result != PrismNative.PRISM_OK)
+                        if (enableSpeech && enableBraille &&
+                            PrismNative.prism_backend_output(_backend, utf8Bytes, interrupt) == PrismNative.PRISM_OK)
                         {
-                            // If output fails, try speak alone
+                            return;
+                        }
+                        if (enableSpeech)
+                        {
                             PrismNative.prism_backend_speak(_backend, utf8Bytes, interrupt);
+                        }
+                        if (enableBraille)
+                        {
+                            PrismNative.prism_backend_braille(_backend, utf8Bytes);
                         }
                         return;
                     }
@@ -139,7 +149,7 @@ namespace KamlaAccessibility.Speech
                 }
 
                 // SAPI Fallback
-                if (_fallbackActive && _sapiVoice != null)
+                if (enableSpeech && _fallbackActive && _sapiVoice != null)
                 {
                     try
                     {

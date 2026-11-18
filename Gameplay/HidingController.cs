@@ -1,122 +1,129 @@
-using System;
-using UnityEngine;
+using System.Collections.Generic;
 using Il2Cpp;
-using KamlaAccessibility.Speech;
-using KamlaAccessibility.Audio;
+using UnityEngine;
 
 namespace KamlaAccessibility.Gameplay
 {
-    /// <summary>
-    /// Handles the Alt + H emergency hiding shortcut, eagerly finding the nearest hiding spot
-    /// and safely concealing the character from Kamla.
-    /// </summary>
     public static class HidingController
     {
-        public static void TryEmergencyHide(PlayerMovement player)
+        public static bool TryFindRoute(PlayerMovement player, HashSet<int> excluded,
+            out TPScript destination, out List<Vector3> waypoints)
         {
-            if (player == null)
+            destination = null;
+            waypoints = null;
+            var candidates = new List<TPScript>();
+            Vector3 origin = player.transform.position;
+            foreach (var spot in Object.FindObjectsOfType<TPScript>())
             {
-                player = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
-            }
-
-            if (player == null)
-            {
-                PrismSpeechProvider.Speak("Cannot find player controller.", true);
-                return;
-            }
-
-            // If already hiding, toggle out of hiding
-            if (player.IsHiding)
-            {
-                player.IsHiding = false;
-                if (player.BackPoint != null)
+                if (spot.isActiveAndEnabled && !spot.IsHideKilling && spot.player == player &&
+                    !excluded.Contains(spot.GetInstanceID()) &&
+                    spot.BPoint != null && spot.TpPoint != null && Vector3.Distance(origin, spot.BPoint.position) <= 25f)
                 {
-                    player.transform.position = player.BackPoint.position;
-                }
-                AudioCueGenerator.PlayNavSelect();
-                PrismSpeechProvider.Speak("Exited hiding spot.", true);
-                return;
-            }
-
-            Vector3 playerPos = player.transform.position;
-
-            // Search for nearest hiding spot
-            GameObject nearestSpot = null;
-            float minDistance = float.MaxValue;
-            string spotName = "Hiding Spot";
-
-            // 1. Check HideDetectionColliders
-            var hideColliders = UnityEngine.Object.FindObjectsOfType<HideDetectionCollider>();
-            foreach (var hc in hideColliders)
-            {
-                if (hc != null && hc.gameObject.activeInHierarchy)
-                {
-                    float d = Vector3.Distance(playerPos, hc.transform.position);
-                    if (d < minDistance)
-                    {
-                        minDistance = d;
-                        nearestSpot = hc.gameObject;
-                        spotName = IdentifyHidingSpotName(hc.gameObject.name);
-                    }
+                    candidates.Add(spot);
                 }
             }
 
-            // 2. Check OpenableAlmirahs (Wardrobes)
-            var almirahs = UnityEngine.Object.FindObjectsOfType<OpenableAlmirah>();
-            foreach (var alm in almirahs)
+            candidates.Sort((left, right) => (left.BPoint.position - origin).sqrMagnitude
+                .CompareTo((right.BPoint.position - origin).sqrMagnitude));
+
+            float bestLength = float.PositiveInfinity;
+            foreach (var spot in candidates)
             {
-                if (alm != null && alm.gameObject.activeInHierarchy)
+                if (Vector3.Distance(origin, spot.BPoint.position) > bestLength + 1f) break;
+                if (!NavigationHelper.TryFindPath(player, spot.BPoint.position, 0f, out var path)) continue;
+                if (NavigationHelper.Flat(path[path.Count - 1] - spot.BPoint.position).sqrMagnitude > 0.6f * 0.6f)
+                    continue;
+
+                float length = 0f;
+                Vector3 previous = origin;
+                foreach (var waypoint in path)
                 {
-                    float d = Vector3.Distance(playerPos, alm.transform.position);
-                    if (d < minDistance)
-                    {
-                        minDistance = d;
-                        nearestSpot = alm.gameObject;
-                        spotName = "Haveli Wardrobe";
-                    }
+                    length += Vector3.Distance(previous, waypoint);
+                    previous = waypoint;
                 }
+                if (length >= bestLength) continue;
+
+                bestLength = length;
+                destination = spot;
+                waypoints = path;
             }
-
-            if (nearestSpot == null || minDistance > 30f)
-            {
-                AudioCueGenerator.PlayBoundaryHit();
-                PrismSpeechProvider.Speak("No hiding spot nearby!", true);
-                return;
-            }
-
-            // Move and hide
-            AudioCueGenerator.PlayNavSelect();
-            PrismSpeechProvider.Speak($"Found nearest hiding spot: {spotName}, {minDistance:F1} meters away. Hiding now...", true);
-
-            // Move player to hiding spot position
-            if (player.Controller != null && player.Controller.enabled)
-            {
-                player.Controller.enabled = false;
-                player.transform.position = nearestSpot.transform.position;
-                player.Controller.enabled = true;
-            }
-            else
-            {
-                player.transform.position = nearestSpot.transform.position;
-            }
-
-            player.IsHiding = true;
-            player.HiddenInObjectName = spotName;
-
-            PrismSpeechProvider.Speak($"Hidden inside {spotName}.", false);
+            return destination != null;
         }
 
-        private static string IdentifyHidingSpotName(string raw)
+        public static bool TryEnter(PlayerMovement player, TPScript spot)
         {
-            if (string.IsNullOrEmpty(raw)) return "Hiding Spot";
-            raw = raw.Replace("(Clone)", "").Replace("_", " ").Trim();
-            if (raw.IndexOf("Bed", StringComparison.OrdinalIgnoreCase) >= 0) return "Under Bed";
-            if (raw.IndexOf("Wardrobe", StringComparison.OrdinalIgnoreCase) >= 0 || raw.IndexOf("Almirah", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Inside Wardrobe";
-            if (raw.IndexOf("Cupboard", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Inside Cupboard";
+            if (player.IsHiding) return player.TpScriptRef == spot;
+            if (spot == null || !spot.isActiveAndEnabled || spot.IsHideKilling || !player.CanInteract) return false;
 
-            return "Safe Hiding Spot";
+            var input = PlayerInputManager.Instance;
+            if (input == null) return false;
+            if (spot.IsNear && (spot.isRayLooking || PuzzleAccessibility.CanReach(player, spot.gameObject, 2f)))
+            {
+                PuzzleAccessibility.WithInteract(spot.isHidingTrigger, spot);
+                return player.IsHiding && player.TpScriptRef == spot;
+            }
+
+            var camera = player.mainCam;
+            if (camera == null) return false;
+            Vector3 direction = spot.transform.position - camera.transform.position;
+            Vector3 horizontal = NavigationHelper.Flat(direction);
+            if (horizontal.sqrMagnitude > 0.001f)
+            {
+                player.transform.rotation = Quaternion.LookRotation(horizontal);
+                var look = camera.GetComponent<MouseLook>();
+                if (look != null)
+                {
+                    look.xRotation = -Mathf.Atan2(direction.y, horizontal.magnitude) * Mathf.Rad2Deg;
+                    camera.transform.localRotation = Quaternion.Euler(look.xRotation, 0f, 0f);
+                }
+            }
+            return false;
+        }
+
+        public static string GetName(TPScript spot)
+        {
+            string name = spot.objectName;
+            if (string.IsNullOrWhiteSpace(name)) name = spot.gameObject.name;
+            if (name.IndexOf("bed", System.StringComparison.OrdinalIgnoreCase) >= 0) return "Under the bed";
+            if (name.IndexOf("wardrobe", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                name.IndexOf("almirah", System.StringComparison.OrdinalIgnoreCase) >= 0) return "Wardrobe";
+            if (name.IndexOf("cupboard", System.StringComparison.OrdinalIgnoreCase) >= 0) return "Cupboard";
+            return string.IsNullOrWhiteSpace(spot.objectName) ? "Hiding spot" :
+                HotspotManager.SplitCamelCase(spot.objectName.Replace("_", " ").Trim());
+        }
+
+        internal static void ClearObstructedExit(PlayerMovement player, TPScript spot)
+        {
+            var controller = player.Controller;
+            if (spot == null || spot.BPoint == null || controller == null || !controller.enabled) return;
+
+            Vector3 exit = spot.BPoint.position;
+            Vector3 offset = exit - player.transform.position;
+            Vector3 direction = NavigationHelper.Flat(offset);
+            if (offset.sqrMagnitude > 1.5f * 1.5f || direction.sqrMagnitude < 0.1f * 0.1f) return;
+
+            var obstruction = NavigationHelper.FindBlockingCollider(player, direction, direction.magnitude);
+            if (obstruction == null || !obstruction.transform.IsChildOf(spot.transform)) return;
+
+            // Some cupboard exit animations leave the controller behind their closing door.
+            // Use the game's own exit point only when the player capsule is clear there.
+            var bounds = controller.bounds;
+            float radius = Mathf.Max(0.1f, Mathf.Min(bounds.extents.x, bounds.extents.z) - controller.skinWidth);
+            Vector3 lower = bounds.center + offset;
+            Vector3 upper = lower;
+            lower.y = bounds.min.y + offset.y + radius + 0.06f;
+            upper.y = Mathf.Max(lower.y, bounds.max.y + offset.y - radius);
+            controller.enabled = false;
+            try
+            {
+                if (!Physics.CheckCapsule(lower, upper, radius, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+                    player.transform.position = exit;
+            }
+            finally
+            {
+                controller.enabled = true;
+                Physics.SyncTransforms();
+            }
         }
     }
 }

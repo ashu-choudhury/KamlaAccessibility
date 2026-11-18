@@ -1,7 +1,7 @@
 # Kamla Accessibility Mod
 
 A full accessibility mod for **Kamla**, an Indian survival horror game developed by Mad-Mantra Games. 
-Built specifically for blind and visually impaired players, this mod integrates the universal **Prism** speech and braille library, providing complete mouse-free gameplay: categorized hotspot browsing, auto-walk navigation, contextual interaction menus, emergency hiding shortcuts, health/threat status reports, real-time subtitle reading, and one-key graphics minimization.
+Built for blind and visually impaired players, this mod integrates the **Prism** speech and braille library for hotspot browsing, auto-walk, contextual interactions, automatic hiding, status reports, subtitles, and graphics controls.
 
 ---
 
@@ -14,13 +14,14 @@ Built specifically for blind and visually impaired players, this mod integrates 
 - **Categorized Hotspot & Auto-Walk System**:
   - `Home` / `End`: Cycle through object categories (Doors, Items, Containers, Ritual/Puzzles, Hiding Spots, Kamla, All Objects).
   - `Page Up` / `Page Down`: Cycle through individual hotspots in the selected category with real-time distance (meters), clock direction (1-12 o'clock), and state.
-  - `Delete`: **Auto-walk to selected hotspot**! Characters automatically walk towards the target with destination guidance and stop upon arrival.
+  - `Delete`: Walk to the selected hotspot. You can browse nearby objects even when no walking route is available.
 - **Contextual Activation & Multi-Option Menus (Enter Key)**:
   - Press `Enter` to activate nearby items, open/close doors, drawers, or wardrobes.
   - When multiple interactables are nearby, pressing `Enter` opens an accessible audio menu (*"Press 1 for Key, Press 2 for Matches..."*). Press number keys `1`–`9` to choose.
-- **Emergency Hiding Shortcut (`Alt + H`)**:
-  - Instantly locates the nearest hiding spot (wardrobe, almirah, bed, or safe zone) and safely conceals the player.
-  - Announces the hiding location and status.
+- **Automatic Hiding**:
+  - When Kamla starts chasing, the mod searches for a nearby hiding entrance with a walkable route and uses the game's sprint and hiding controls. Normal stamina, obstacles, and hiding conditions apply.
+  - Take over with your movement controls or press `Delete` to cancel. Automatic hiding waits for the next chase after cancellation.
+  - To turn it off, set `AutomaticHiding` to `false` under `[KamlaAccessibility]` in `UserData\MelonPreferences.cfg` while the game is closed.
 - **Health & Player Status (`H` Key)**:
   - Reports remaining lives, stamina percentage, carried items, current room/area, and Kamla's active threat status (distance, clock direction, and whether roaming or chasing).
 - **One-Key Graphics Minimizer (`F10`)**:
@@ -41,9 +42,10 @@ Built specifically for blind and visually impaired players, this mod integrates 
 | `Page Up` / `Page Down` | Browse objects in current category (Distance, Clock direction, State) |
 | `Delete` | **Auto-walk** to the selected hotspot (WASD or Delete again to stop) |
 | `Enter` / `Keypad Enter` | Interact with object, pick up item, or open multi-option action menu |
-| `1` – `9` | Choose option in multi-option action menu |
-| `Alt + H` | **Emergency Hide**: automatically find and enter nearest hiding spot |
+| `Up` / `Down`, then `Enter` | Browse and activate any nearby action when the interaction menu is open |
+| `1` – `9` | Choose one of the first nine actions directly |
 | `H` | Announce health, lives, stamina, location, and Kamla threat status |
+| `F3` | Toggle automatic subtitle, prompt, and crosshair narration |
 | `F10` | **Minimize Graphic Settings** for maximum performance |
 | `Keypad 0` / `Alt + F` | Scan nearby radar (distance & clock direction) |
 | `Keypad 8` / `Alt + C` | Announce facing compass heading |
@@ -55,14 +57,26 @@ Built specifically for blind and visually impaired players, this mod integrates 
 
 ---
 
+## Walking and puzzles
+
+- Page Up and Page Down announce the selected hotspot's distance and clock direction. Kamla's warning sound pans as you turn and pulses faster as she approaches or chases you. Change `EnableKamlaBeacon` and `BeaconVolume` in `UserData\MelonPreferences.cfg` while the game is closed.
+- Delete announces the first direction of the route when auto-walk starts. Routes look for an approach near the interaction area and can check nearby detours around obstacles.
+- When movement is obstructed, the mod announces the obstacle or missing footing and checks for a clear step on either side. Enter prioritizes supported actions on the nearby obstacle.
+- Browse **Ritual and Puzzles** to find nearby puzzle objects and revealed clues. Use Enter to inspect or interact. In the suitcase, Left and Right select a wheel, Up and Down turn it, and Enter confirms the spoken digit and advances to the next wheel. The suitcase opens when the combination matches. Escape leaves. Hold Enter when prompted for the handpump or ritual placement. The footstep puzzle announces the game's visible clue meter.
+- In the Outer Area, the **Handpump** and **Fire** hotspots report the puzzle state. After placing the **Steel water pot** at the pump, hold Enter to fill it. Use the pump action again to pick up the filled pot. After the first pour, refill it for the second.
+- F3 affects automatic narration. Menus, explicit inspection, puzzle control feedback, and obstacle warnings remain available.
+
+Kamla's warning sound is adapted from `bong_001.ogg` in Kenney's [Interface Sounds](https://opengameart.org/content/interface-sounds), released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+
 ## Building from Source
 
-1. Ensure the [.NET 6.0 SDK or higher](https://dotnet.microsoft.com/) is installed.
-2. Run `build.bat` (or `build.ps1` in PowerShell):
+1. Install the [.NET 6.0 SDK](https://dotnet.microsoft.com/download/dotnet/6.0) and [MelonLoader for Windows x64](https://github.com/LavaGang/MelonLoader/releases).
+2. Launch Kamla once with MelonLoader to generate the game assemblies. Close the game before deploying the mod.
+3. Run `build.bat` (or `build.ps1` in PowerShell):
    ```cmd
    build.bat
    ```
-3. `KamlaAccessibility.dll` is automatically compiled and copied to `E:\games\Kamla\Kamla\Mods\`.
+4. The build deploys `KamlaAccessibility.dll` to `D:\game\Kamla\Mods\` and `prism.dll` to the game folder by default. For a different installation, pass its path to `build.bat` or use `build.ps1 -GameDir <path>`. To compile without deploying, run `dotnet build -c Release -p:DeployMod=false`.
 
 ---
 

@@ -1,8 +1,8 @@
 @echo off
 echo Building Kamla Accessibility Mod...
-dotnet build -c Release
-if %ERRORLEVEL% NEQ 0 (
-    echo Build failed!
-    exit /b %ERRORLEVEL%
-)
-echo Build succeeded! Mod deployed to E:\games\Kamla\Kamla\Mods\
+setlocal
+set "GAME_DIR=%~1"
+if not defined GAME_DIR set "GAME_DIR=D:\game\Kamla"
+dotnet build "%~dp0KamlaAccessibility.csproj" -c Release "-p:GameDir=%GAME_DIR%"
+if errorlevel 1 exit /b %ERRORLEVEL%
+echo Build succeeded! Mod deployed to "%GAME_DIR%\Mods".
