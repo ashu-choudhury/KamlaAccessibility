@@ -1,4 +1,4 @@
-using System;
+using Il2Cpp;
 using UnityEngine;
 using KamlaAccessibility.Speech;
 using KamlaAccessibility.Audio;
@@ -45,47 +45,52 @@ namespace KamlaAccessibility.Gameplay
         {
             if (go == null) return string.Empty;
 
-            string name = CleanName(go.name);
+            string name = DescribeObject(go);
 
-            // Check for prompt
             if (!string.IsNullOrEmpty(prompt))
             {
-                return $"{name}. {prompt}";
+                return string.IsNullOrEmpty(name) ? prompt : $"{name}. {prompt}";
             }
 
             return name;
         }
 
-        private string CleanName(string name)
+        internal static string DescribeObject(GameObject target)
         {
-            if (string.IsNullOrEmpty(name)) return "Interactable";
-
-            name = name.Replace("(Clone)", "").Trim();
-            name = name.Replace("_", " ");
-
-            // Clean up internal naming conventions
-            if (name.IndexOf("Door", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Door";
-            if (name.IndexOf("Drawer", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Drawer";
-            if (name.IndexOf("Almirah", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("Cupboard", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Cupboard";
-            if (name.IndexOf("Chest", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Chest";
-            if (name.IndexOf("SmudgeStick", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Smudge Stick";
-            if (name.IndexOf("Key", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Key";
-            if (name.IndexOf("Brick", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Puzzle Brick";
-            if (name.IndexOf("Murti", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Ganesh Idol";
-            if (name.IndexOf("Bell", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Temple Bell";
-            if (name.IndexOf("Note", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Note";
-
-            return name;
+            if (target == null) return null;
+            if (target.GetComponentInParent<ItemPicker>() is { } item && item != null)
+                return HotspotManager.CleanItemName(item);
+            if (target.GetComponentInParent<Key>() is { } key && key != null)
+                return HotspotManager.CleanKeyName(key);
+            if (target.GetComponentInParent<TPScript>() is { } cover && cover != null)
+                return HidingController.GetName(cover);
+            if (target.GetComponentInParent<Note>() is { } note && note != null)
+                return HotspotManager.CleanNoteName(note);
+            if (target.GetComponentInParent<Book>() != null) return "Key book";
+            if (target.GetComponentInParent<ItemDetectForWallSlide>() != null) return "Sliding wall mechanism";
+            if (target.GetComponentInParent<DoorLocked>() is { } locked && locked != null)
+                return HotspotManager.CleanDoorName(locked.gameObject);
+            if (target.GetComponentInParent<DoorScriptCode>() is { } scriptDoor && scriptDoor != null)
+                return HotspotManager.CleanDoorName(scriptDoor.gameObject);
+            if (target.GetComponentInParent<IntroEventDoor>() is { } storyboardDoor && storyboardDoor != null)
+                return HotspotManager.CleanDoorName(storyboardDoor.gameObject);
+            if (target.GetComponentInParent<Door>() is { } door && door != null)
+                return HotspotManager.CleanDoorName(door.gameObject);
+            if (target.GetComponentInParent<MainGateOuterArea>() != null) return "Main Haveli Gate";
+            if (target.GetComponentInParent<GlassShelf>() != null) return "Glass cabinet";
+            if (target.GetComponentInParent<Suitcase>() != null) return "Combination suitcase";
+            if (target.GetComponentInParent<Handpump>() != null) return "Handpump";
+            if (target.GetComponentInParent<FireBox>() != null) return "Fire";
+            if (target.GetComponentInParent<ItemInCourtyard>() is { } offering && offering != null)
+                return $"{HotspotManager.FormatRecipeItem(offering.MyItem)} ritual circle";
+            if (target.GetComponentInParent<CourtYardMechanic>() != null) return "Courtyard ritual altar";
+            if (target.GetComponentInParent<GaneshMurtiManager>() != null) return "Ganesh altar";
+            if (target.GetComponentInParent<PushableBrick>() is { } brick && brick != null)
+                return PuzzleAccessibility.DescribeBrick(brick);
+            var lookable = target.GetComponentInParent<Lookable>();
+            if (lookable == null) return null;
+            string name = lookable.gameObject.name.Replace("(Clone)", "").Replace("_", " ").Trim();
+            return HotspotManager.FormatKnownItemName(name) ?? HotspotManager.SplitCamelCase(name);
         }
     }
 }

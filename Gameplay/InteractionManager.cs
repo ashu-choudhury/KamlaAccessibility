@@ -11,11 +11,13 @@ namespace KamlaAccessibility.Gameplay
     {
         public string Title { get; set; }
         public Action Action { get; set; }
+        public GameObject Target { get; }
 
-        public InteractionOption(string title, Action action)
+        public InteractionOption(string title, Action action, GameObject target)
         {
             Title = title;
             Action = action;
+            Target = target;
         }
     }
 
@@ -27,10 +29,11 @@ namespace KamlaAccessibility.Gameplay
     {
         private bool _isMenuActive = false;
         private List<InteractionOption> _activeOptions = new List<InteractionOption>();
+        private int _selectedOption;
 
         public bool IsMenuActive => _isMenuActive;
 
-        public void Update(Transform playerTransform)
+        internal void Update(PlayerMovement player, PuzzleAccessibility puzzles, GameObject focusedObject)
         {
             // If the numbered menu is active, listen for 1-9 or Escape
             if (_isMenuActive)
@@ -42,21 +45,18 @@ namespace KamlaAccessibility.Gameplay
             // Enter key triggers interaction
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
             {
-                TriggerInteraction(playerTransform);
+                TriggerInteraction(player, puzzles, focusedObject);
             }
         }
 
-        private void TriggerInteraction(Transform playerTransform)
+        private void TriggerInteraction(PlayerMovement player, PuzzleAccessibility puzzles, GameObject focusedObject)
         {
-            if (playerTransform == null)
+            if (!player.CanInteract)
             {
-                var cam = Camera.main;
-                if (cam != null) playerTransform = cam.transform;
+                PrismSpeechProvider.Speak("You cannot interact right now.", true);
+                return;
             }
-
-            if (playerTransform == null) return;
-
-            Vector3 playerPos = playerTransform.position;
+            Vector3 playerPos = player.transform.position;
             float interactRadius = 3.0f;
 
             var options = new List<InteractionOption>();
@@ -73,10 +73,11 @@ namespace KamlaAccessibility.Gameplay
                     string itemName = HotspotManager.CleanItemName(item);
                     options.Add(new InteractionOption($"Pick up {itemName}", () =>
                     {
-                        item.AutoPickUp();
+                        bool pickedUp = TryPickUp(player, item);
                         AudioCueGenerator.PlayNavSelect();
-                        PrismSpeechProvider.Speak($"Picked up {itemName}.", true);
-                    }));
+                        PrismSpeechProvider.Speak(pickedUp ? $"Picked up {itemName}." :
+                            $"Could not pick up {itemName}. Move closer or check what you are carrying.", true);
+                    }, item.gameObject));
                 }
             }
 
@@ -91,27 +92,12 @@ namespace KamlaAccessibility.Gameplay
                     string keyName = HotspotManager.CleanKeyName(k);
                     options.Add(new InteractionOption($"Collect {keyName}", () =>
                     {
-                        k.keyCollect();
-                        AudioCueGenerator.PlayNavSelect();
-                        PrismSpeechProvider.Speak($"Collected {keyName}.", true);
-                    }));
-                }
-            }
-
-            // 2b. Check Books
-            var books = UnityEngine.Object.FindObjectsOfType<Book>();
-            foreach (var b in books)
-            {
-                if (b != null && b.gameObject.activeInHierarchy &&
-                    Vector3.Distance(playerPos, b.transform.position) <= interactRadius &&
-                    seenObjects.Add(b.gameObject.GetInstanceID()))
-                {
-                    options.Add(new InteractionOption("Inspect Ancient Prayer Book", () =>
-                    {
-                        b.HasInteractedWithBook = true;
-                        AudioCueGenerator.PlayNavSelect();
-                        PrismSpeechProvider.Speak("Ancient Prayer Book inspected.", true);
-                    }));
+                        if (PuzzleAccessibility.CanReach(player, k.gameObject, 2.75f))
+                            PuzzleAccessibility.WithInteract(k.keyCollect, k);
+                        if (k.HasCollectedKey) AudioCueGenerator.PlayNavSelect();
+                        PrismSpeechProvider.Speak(k.HasCollectedKey ? $"Collected {keyName}." :
+                            $"Could not collect {keyName}. Move closer and try again.", true);
+                    }, k.gameObject));
                 }
             }
 
@@ -123,13 +109,13 @@ namespace KamlaAccessibility.Gameplay
                     Vector3.Distance(playerPos, n.transform.position) <= interactRadius &&
                     seenObjects.Add(n.gameObject.GetInstanceID()))
                 {
-                    options.Add(new InteractionOption("Read Haveli Note", () =>
+                    options.Add(new InteractionOption($"Read {HotspotManager.CleanNoteName(n)}", () =>
                     {
                         string noteText = !string.IsNullOrEmpty(n.noteString) ? n.noteString : "Blank Note";
                         n.isReadOnce = true;
                         AudioCueGenerator.PlayNavSelect();
                         PrismSpeechProvider.Speak($"Note: {noteText}", true);
-                    }));
+                    }, n.gameObject));
                 }
             }
 
@@ -145,10 +131,9 @@ namespace KamlaAccessibility.Gameplay
                     string actionVerb = dsc.open ? "Close" : "Open";
                     options.Add(new InteractionOption($"{actionVerb} {doorName}", () =>
                     {
-                        dsc.playerDoorOpen();
-                        AudioCueGenerator.PlayNavSelect();
-                        PrismSpeechProvider.Speak($"{doorName} toggled.", true);
-                    }));
+                        if (NavigationHelper.TryToggleDoor(dsc)) AudioCueGenerator.PlayNavSelect();
+                        PrismSpeechProvider.Speak(dsc.open ? $"{doorName} is open." : $"{doorName} is closed.", true);
+                    }, dsc.gameObject));
                 }
             }
 
@@ -164,10 +149,9 @@ namespace KamlaAccessibility.Gameplay
                     string actionVerb = door.isOpen ? "Close" : "Open";
                     options.Add(new InteractionOption($"{actionVerb} {doorName}", () =>
                     {
-                        door.playerDoorOpen();
-                        AudioCueGenerator.PlayNavSelect();
-                        PrismSpeechProvider.Speak($"{doorName} toggled.", true);
-                    }));
+                        if (NavigationHelper.TryToggleDoor(door)) AudioCueGenerator.PlayNavSelect();
+                        PrismSpeechProvider.Speak(door.isOpen ? $"{doorName} is open." : $"{doorName} is closed.", true);
+                    }, door.gameObject));
                 }
             }
 
@@ -182,11 +166,11 @@ namespace KamlaAccessibility.Gameplay
                     string doorName = HotspotManager.CleanDoorName(dl.gameObject);
                     options.Add(new InteractionOption($"Try to open {doorName}", () =>
                     {
-                        dl.playerDoorOpen();
+                        PuzzleAccessibility.WithInteract(dl.playerDoorOpen);
                         AudioCueGenerator.PlayNavSelect();
                         bool unlocked = dl.isUnlocked || dl.IsDoorUnlocked;
                         PrismSpeechProvider.Speak(unlocked ? $"{doorName} unlocked." : $"{doorName} is locked.", true);
-                    }));
+                    }, dl.gameObject));
                 }
             }
 
@@ -198,12 +182,13 @@ namespace KamlaAccessibility.Gameplay
                     Vector3.Distance(playerPos, id.transform.position) <= interactRadius + 0.8f &&
                     seenObjects.Add(id.gameObject.GetInstanceID()))
                 {
-                    options.Add(new InteractionOption("Open Entrance Gate", () =>
+                    string doorName = HotspotManager.CleanDoorName(id.gameObject);
+                    options.Add(new InteractionOption($"Try to open {doorName}", () =>
                     {
-                        id.playerDoorOpen();
+                        PuzzleAccessibility.WithInteract(id.playerDoorOpen);
                         AudioCueGenerator.PlayNavSelect();
-                        PrismSpeechProvider.Speak("Entrance gate toggled.", true);
-                    }));
+                        PrismSpeechProvider.Speak(id.isOpened ? $"{doorName} is open." : $"{doorName} is closed.", true);
+                    }, id.gameObject));
                 }
             }
 
@@ -223,7 +208,7 @@ namespace KamlaAccessibility.Gameplay
                         alm.isOpen = !alm.isOpen;
                         AudioCueGenerator.PlayNavSelect();
                         PrismSpeechProvider.Speak($"Almirah {(alm.isOpen ? "opened" : "closed")}.", true);
-                    }));
+                    }, alm.gameObject));
                 }
             }
 
@@ -242,7 +227,7 @@ namespace KamlaAccessibility.Gameplay
                         if (c.anim != null) c.anim.SetTrigger(c.isOpen ? "Open" : "Close");
                         AudioCueGenerator.PlayNavSelect();
                         PrismSpeechProvider.Speak($"Chest {(c.isOpen ? "opened" : "closed")}.", true);
-                    }));
+                    }, c.gameObject));
                 }
             }
 
@@ -259,11 +244,25 @@ namespace KamlaAccessibility.Gameplay
                         if (dr.anim != null) dr.anim.SetTrigger("Open");
                         AudioCueGenerator.PlayNavSelect();
                         PrismSpeechProvider.Speak("Drawer toggled.", true);
-                    }));
+                    }, dr.gameObject));
                 }
             }
 
-            // Handle options
+            puzzles.AddOptions(player, options);
+            options.RemoveAll(option => !PuzzleAccessibility.CanReach(player, option.Target, 3.8f));
+            if (focusedObject != null)
+            {
+                int focusedIndex = options.FindIndex(option => option.Target == focusedObject ||
+                    focusedObject.transform.IsChildOf(option.Target.transform) ||
+                    option.Target.transform.IsChildOf(focusedObject.transform));
+                if (focusedIndex > 0)
+                {
+                    var focused = options[focusedIndex];
+                    options.RemoveAt(focusedIndex);
+                    options.Insert(0, focused);
+                }
+            }
+
             if (options.Count == 0)
             {
                 AudioCueGenerator.PlayBoundaryHit();
@@ -281,10 +280,11 @@ namespace KamlaAccessibility.Gameplay
             // Multiple options: Open audio numbered menu
             _activeOptions = options;
             _isMenuActive = true;
+            _selectedOption = 0;
 
             AudioCueGenerator.PlayNavSelect();
             var sb = new System.Text.StringBuilder();
-            sb.Append("Multiple options: ");
+            sb.Append("Multiple options. Up and Down browse all actions, Enter selects. ");
             for (int i = 0; i < Math.Min(options.Count, 9); i++)
             {
                 sb.Append($"Press {i + 1} for {options[i].Title}. ");
@@ -300,6 +300,19 @@ namespace KamlaAccessibility.Gameplay
                 return;
             }
 
+            int direction = Input.GetKeyDown(KeyCode.UpArrow) ? -1 : Input.GetKeyDown(KeyCode.DownArrow) ? 1 : 0;
+            if (direction != 0)
+            {
+                _selectedOption = (_selectedOption + direction + _activeOptions.Count) % _activeOptions.Count;
+                PrismSpeechProvider.Speak($"{_activeOptions[_selectedOption].Title}, {_selectedOption + 1} of {_activeOptions.Count}.", true);
+                return;
+            }
+            if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+            {
+                ExecuteOption(_selectedOption);
+                return;
+            }
+
             // Keys 1 to 9
             for (int i = 0; i < Math.Min(_activeOptions.Count, 9); i++)
             {
@@ -308,12 +321,32 @@ namespace KamlaAccessibility.Gameplay
 
                 if (Input.GetKeyDown(numKey) || Input.GetKeyDown(padKey))
                 {
-                    var opt = _activeOptions[i];
-                    _isMenuActive = false;
-                    opt.Action?.Invoke();
+                    ExecuteOption(i);
                     return;
                 }
             }
+        }
+
+        internal static bool TryPickUp(PlayerMovement player, ItemPicker item)
+        {
+            if (player == null || !player.CanInteract || item == null ||
+                !PuzzleAccessibility.CanReach(player, item.gameObject, 3f)) return false;
+
+            // The automatic pickup helper touches the courtyard objective panel even in the Outer Area.
+            // The normal interaction takes the game's separate path for objects such as the pump handle.
+            var collider = item.coll;
+            bool wasEnabled = collider != null && collider.enabled;
+            PuzzleAccessibility.WithInteract(item.Update, item);
+            return item == null || !item.gameObject.activeInHierarchy || item.transform.IsChildOf(player.transform) ||
+                (wasEnabled && collider != null && !collider.enabled);
+        }
+
+        private void ExecuteOption(int index)
+        {
+            var option = _activeOptions[index];
+            CloseMenu();
+            if (option.Target != null && option.Target.activeInHierarchy) option.Action.Invoke();
+            else PrismSpeechProvider.Speak("That action is no longer available.", true);
         }
 
         public void CloseMenu(string msg = null)

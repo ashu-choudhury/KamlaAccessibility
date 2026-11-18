@@ -3,17 +3,19 @@ using MelonLoader;
 using KamlaAccessibility.Core;
 using KamlaAccessibility.Speech;
 
-[assembly: MelonInfo(typeof(KamlaAccessibility.Core.KamlaAccessibilityMod), "Kamla Accessibility Mod", "1.0.0", "Ashu")]
+[assembly: MelonInfo(typeof(KamlaAccessibilityMod), "Kamla Accessibility Mod", KamlaAccessibilityMod.Version, "Ashu")]
 [assembly: MelonGame("Mad-Mantra Games", "Kamla")]
 
 namespace KamlaAccessibility.Core
 {
     public class KamlaAccessibilityMod : MelonMod
     {
+        internal const string Version = "1.0.6";
+
         public override void OnInitializeMelon()
         {
             MelonLogger.Msg("==================================================");
-            MelonLogger.Msg("  Kamla Accessibility Mod v1.0.0 (Prism Powered)  ");
+            MelonLogger.Msg($"  Kamla Accessibility Mod v{Version} (Prism Powered)  ");
             MelonLogger.Msg("==================================================");
 
             try
@@ -38,16 +40,6 @@ namespace KamlaAccessibility.Core
         public override void OnUpdate()
         {
             AccessibilityCoordinator.Instance?.Update();
-        }
-
-        public override void OnSceneWasLoaded(int buildIndex, string sceneName)
-        {
-            AccessibilityCoordinator.Instance?.OnSceneChanged(sceneName);
-        }
-
-        public override void OnSceneWasInitialized(int buildIndex, string sceneName)
-        {
-            AccessibilityCoordinator.Instance?.OnSceneChanged(sceneName);
         }
 
         public override void OnApplicationQuit()

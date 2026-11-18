@@ -44,7 +44,7 @@ namespace KamlaAccessibility.Gameplay
                 if (col == null || !col.gameObject.activeInHierarchy) continue;
 
                 var go = col.gameObject;
-                string cleanName = IdentifyInteractable(go);
+                string cleanName = InteractionDescriber.DescribeObject(go) ?? IdentifyInteractable(go);
                 if (string.IsNullOrEmpty(cleanName)) continue;
 
                 Vector3 targetPos = col.bounds.center;
