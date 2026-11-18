@@ -133,7 +133,7 @@ namespace KamlaAccessibility.Gameplay
 
     /// <summary>
     /// Hotspot browsing and auto-walk navigation system using Home/End, PageUp/PageDown, and Delete.
-    /// Simulates genuine game walking with spatial footstep audio from SoundManager.
+    /// Simulates genuine game walking with spatial footstep audio from SoundManager and NavMesh path following.
     /// </summary>
     public class HotspotManager
     {
@@ -141,10 +141,15 @@ namespace KamlaAccessibility.Gameplay
         private int _currentCategoryIndex = 0;
         private List<HotspotItem> _currentItems = new List<HotspotItem>();
         private int _currentItemIndex = 0;
+        private Vector3 _lastScanPlayerPos = Vector3.negativeInfinity;
 
         // Auto-walk state
         private bool _isAutoWalking = false;
         private HotspotItem _targetItem = null;
+        private List<Vector3> _waypoints = new List<Vector3>();
+        private int _currentWaypointIndex = 0;
+        private Vector3 _lastRecordedPos = Vector3.zero;
+        private float _stuckTimer = 0f;
         private float _footstepTimer = 0f;
 
         public bool IsAutoWalking => _isAutoWalking;
@@ -210,24 +215,27 @@ namespace KamlaAccessibility.Gameplay
             string catName = FormatCategoryName(selectedCat);
             if (_currentItems.Count == 0)
             {
-                PrismSpeechProvider.Speak($"{catName} category. No objects found nearby.", true);
+                PrismSpeechProvider.Speak($"{catName} category. No accessible objects found nearby.", true);
             }
             else
             {
-                PrismSpeechProvider.Speak($"{catName} category. {_currentItems.Count} objects. Press Page Up or Page Down to browse.", true);
+                PrismSpeechProvider.Speak($"{catName} category. {_currentItems.Count} accessible objects. Press Page Up or Page Down to browse.", true);
             }
         }
 
         private void CycleItem(Transform playerTransform, int direction)
         {
-            if (_currentItems.Count == 0)
+            Vector3 playerPos = playerTransform != null ? playerTransform.position : Vector3.zero;
+
+            // Re-scan if category is empty or if player has moved significantly (> 3.5m)
+            if (_currentItems.Count == 0 || Vector3.Distance(playerPos, _lastScanPlayerPos) > 3.5f)
             {
                 HotspotCategory selectedCat = Categories[_currentCategoryIndex];
                 ScanCategory(playerTransform, selectedCat);
                 if (_currentItems.Count == 0)
                 {
                     AudioCueGenerator.PlayBoundaryHit();
-                    PrismSpeechProvider.Speak($"No objects found in {FormatCategoryName(selectedCat)} category.", true);
+                    PrismSpeechProvider.Speak($"No accessible objects found in {FormatCategoryName(selectedCat)} category.", true);
                     return;
                 }
             }
@@ -235,14 +243,19 @@ namespace KamlaAccessibility.Gameplay
             _currentItemIndex = (_currentItemIndex + direction + _currentItems.Count) % _currentItems.Count;
             HotspotItem item = _currentItems[_currentItemIndex];
 
-            if (item.GameObject == null)
+            if (item.GameObject == null || !item.GameObject.activeInHierarchy)
             {
                 _currentItems.RemoveAt(_currentItemIndex);
+                if (_currentItems.Count == 0)
+                {
+                    AudioCueGenerator.PlayBoundaryHit();
+                    PrismSpeechProvider.Speak("No more accessible objects in this category.", true);
+                    return;
+                }
                 CycleItem(playerTransform, 0);
                 return;
             }
 
-            Vector3 playerPos = playerTransform != null ? playerTransform.position : Vector3.zero;
             Vector3 forward = playerTransform != null ? playerTransform.forward : Vector3.forward;
             float dist = Vector3.Distance(playerPos, item.Position);
             int clock = GetClockDirection(forward, item.Position - playerPos);
@@ -256,19 +269,33 @@ namespace KamlaAccessibility.Gameplay
         {
             if (_currentItems.Count == 0 || _currentItemIndex >= _currentItems.Count)
             {
-                PrismSpeechProvider.Speak("No object selected. Press Page Up or Page Down to select an object first.", true);
+                PrismSpeechProvider.Speak("No object selected. Press Page Up or Page Down to select an accessible object first.", true);
                 return;
             }
 
             _targetItem = _currentItems[_currentItemIndex];
-            if (_targetItem.GameObject == null)
+            if (_targetItem.GameObject == null || !_targetItem.GameObject.activeInHierarchy)
             {
                 PrismSpeechProvider.Speak("Selected object is no longer available.", true);
                 return;
             }
 
+            Vector3 playerPos = playerTransform != null ? playerTransform.position : Vector3.zero;
+
+            // Calculate walkable NavMesh path
+            if (!NavigationHelper.IsReachable(playerPos, _targetItem.Position, out _waypoints) || _waypoints.Count == 0)
+            {
+                AudioCueGenerator.PlayBoundaryHit();
+                PrismSpeechProvider.Speak($"Cannot find a walkable path to {_targetItem.CleanName}. Path is obstructed or locked.", true);
+                return;
+            }
+
             _isAutoWalking = true;
+            _currentWaypointIndex = (_waypoints.Count > 1) ? 1 : 0;
+            _lastRecordedPos = playerPos;
+            _stuckTimer = 0f;
             _footstepTimer = 0f;
+
             AudioCueGenerator.PlayNavSelect();
             PrismSpeechProvider.Speak($"Walking to {_targetItem.CleanName}...", true);
         }
@@ -293,36 +320,64 @@ namespace KamlaAccessibility.Gameplay
                 return;
             }
 
-            if (_targetItem == null || _targetItem.GameObject == null || playerTransform == null)
+            if (_targetItem == null || _targetItem.GameObject == null || !_targetItem.GameObject.activeInHierarchy || playerTransform == null)
             {
-                StopAutoWalk("Target lost.");
+                StopAutoWalk("Target lost or no longer available.");
                 return;
             }
 
             Vector3 targetPos = _targetItem.Position;
             Vector3 playerPos = playerTransform.position;
 
-            Vector3 toTarget = targetPos - playerPos;
-            toTarget.y = 0; // Move horizontally
-            float dist = toTarget.magnitude;
+            // Check arrival to target (horizontal distance, accounts for items on tables or altars)
+            Vector3 toFinalTarget = targetPos - playerPos;
+            toFinalTarget.y = 0;
+            float distToFinal = toFinalTarget.magnitude;
 
-            // Stop when within arrival distance (~1.4 meters)
-            if (dist <= 1.4f)
+            if (distToFinal <= 1.4f)
             {
                 StopAutoWalk($"Arrived at {_targetItem.CleanName}. Press Enter to interact.");
                 return;
             }
 
-            // Rotate smoothly towards target
-            if (toTarget.sqrMagnitude > 0.01f)
+            if (_waypoints == null || _waypoints.Count == 0)
             {
-                Quaternion targetRot = Quaternion.LookRotation(toTarget);
-                playerTransform.rotation = Quaternion.Slerp(playerTransform.rotation, targetRot, Time.deltaTime * 10f);
+                StopAutoWalk("Path lost.");
+                return;
+            }
+
+            // Current target waypoint along NavMesh path corners
+            Vector3 targetWaypoint = _currentWaypointIndex < _waypoints.Count ? _waypoints[_currentWaypointIndex] : targetPos;
+            Vector3 toWaypoint = targetWaypoint - playerPos;
+            toWaypoint.y = 0;
+            float distToWaypoint = toWaypoint.magnitude;
+
+            // If arrived at current waypoint corner, advance to next
+            if (distToWaypoint <= 0.65f)
+            {
+                if (_currentWaypointIndex < _waypoints.Count - 1)
+                {
+                    _currentWaypointIndex++;
+                    targetWaypoint = _waypoints[_currentWaypointIndex];
+                    toWaypoint = targetWaypoint - playerPos;
+                    toWaypoint.y = 0;
+                    distToWaypoint = toWaypoint.magnitude;
+                }
+            }
+
+            // Automatically open unlocked closed doors near the player along the path
+            NavigationHelper.CheckAndOpenDoorsNearPlayer(playerPos, 2.5f);
+
+            // Rotate smoothly towards the next waypoint
+            if (toWaypoint.sqrMagnitude > 0.01f)
+            {
+                Quaternion targetRot = Quaternion.LookRotation(toWaypoint.normalized);
+                playerTransform.rotation = Quaternion.Slerp(playerTransform.rotation, targetRot, Time.deltaTime * 12f);
             }
 
             // Normal walking speed from the player's own speed property
             float walkSpeed = player.speed > 1.5f ? player.speed : 4.5f;
-            Vector3 forwardMove = toTarget.normalized * walkSpeed * Time.deltaTime;
+            Vector3 forwardMove = toWaypoint.normalized * walkSpeed * Time.deltaTime;
 
             // Inform the game's movement system and input manager
             if (player.inputManager != null)
@@ -331,7 +386,7 @@ namespace KamlaAccessibility.Gameplay
             }
             player.IsMoving = true;
 
-            // Move the controller smoothly (do not add extra artificial gravity, the game handles it)
+            // Move the controller smoothly
             if (controller != null && controller.enabled)
             {
                 controller.Move(forwardMove);
@@ -356,12 +411,42 @@ namespace KamlaAccessibility.Gameplay
                     catch { }
                 }
             }
+
+            // Stuck detection & dynamic repathing
+            _stuckTimer += Time.deltaTime;
+            if (_stuckTimer >= 1.2f)
+            {
+                _stuckTimer = 0f;
+                float movedDist = Vector3.Distance(playerPos, _lastRecordedPos);
+                _lastRecordedPos = playerPos;
+
+                if (movedDist < 0.22f)
+                {
+                    // Player is stuck against something (door, corner, or obstacle)
+                    NavigationHelper.CheckAndOpenDoorsNearPlayer(playerPos, 3.0f);
+
+                    // Recalculate path from current player position
+                    if (NavigationHelper.IsReachable(playerPos, targetPos, out var newWaypoints) && newWaypoints.Count > 0)
+                    {
+                        _waypoints = newWaypoints;
+                        _currentWaypointIndex = (_waypoints.Count > 1) ? 1 : 0;
+                    }
+                    else
+                    {
+                        StopAutoWalk("Path is blocked by an obstacle.");
+                        return;
+                    }
+                }
+            }
         }
 
         public void StopAutoWalk(string message = null)
         {
             _isAutoWalking = false;
             _targetItem = null;
+            _waypoints.Clear();
+            _currentWaypointIndex = 0;
+            _stuckTimer = 0f;
 
             var player = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
             if (player != null)
@@ -388,11 +473,39 @@ namespace KamlaAccessibility.Gameplay
             }
         }
 
+        private bool TryAddHotspot(GameObject go, string cleanName, HotspotCategory cat, Vector3 playerPos, HashSet<int> seenObjects)
+        {
+            if (go == null || !go.activeInHierarchy) return false;
+            if (go.scene.name == null) return false;
+
+            int id = go.GetInstanceID();
+            if (!seenObjects.Add(id)) return false;
+
+            Vector3 targetPos = go.transform.position;
+            float dist = Vector3.Distance(playerPos, targetPos);
+            if (dist > 50f) return false;
+
+            // Only include physically reachable hotspots
+            if (!NavigationHelper.IsReachable(playerPos, targetPos)) return false;
+
+            _currentItems.Add(new HotspotItem(go, cleanName, cat));
+            return true;
+        }
+
         public void ScanCategory(Transform playerTransform, HotspotCategory category)
         {
             _currentItems.Clear();
             _currentItemIndex = 0;
+
+            if (playerTransform == null)
+            {
+                var p = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
+                if (p != null) playerTransform = p.transform;
+                else if (Camera.main != null) playerTransform = Camera.main.transform;
+            }
+
             Vector3 playerPos = playerTransform != null ? playerTransform.position : Vector3.zero;
+            _lastScanPlayerPos = playerPos;
             var seenObjects = new HashSet<int>();
 
             switch (category)
@@ -402,56 +515,56 @@ namespace KamlaAccessibility.Gameplay
                     var scriptDoors = UnityEngine.Object.FindObjectsOfType<DoorScriptCode>(true);
                     foreach (var d in scriptDoors)
                     {
-                        if (d != null && d.gameObject.scene.name != null && seenObjects.Add(d.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(d.gameObject, CleanDoorName(d.gameObject), HotspotCategory.Doors));
+                        if (d != null)
+                            TryAddHotspot(d.gameObject, CleanDoorName(d.gameObject), HotspotCategory.Doors, playerPos, seenObjects);
                     }
 
                     // 2. Door
                     var doors = UnityEngine.Object.FindObjectsOfType<Door>(true);
                     foreach (var d in doors)
                     {
-                        if (d != null && d.gameObject.scene.name != null && seenObjects.Add(d.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(d.gameObject, CleanDoorName(d.gameObject), HotspotCategory.Doors));
+                        if (d != null)
+                            TryAddHotspot(d.gameObject, CleanDoorName(d.gameObject), HotspotCategory.Doors, playerPos, seenObjects);
                     }
 
                     // 3. DoorLocked
                     var lockedDoors = UnityEngine.Object.FindObjectsOfType<DoorLocked>(true);
                     foreach (var ld in lockedDoors)
                     {
-                        if (ld != null && ld.gameObject.scene.name != null && seenObjects.Add(ld.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(ld.gameObject, "Locked " + CleanDoorName(ld.gameObject), HotspotCategory.Doors));
+                        if (ld != null)
+                            TryAddHotspot(ld.gameObject, "Locked " + CleanDoorName(ld.gameObject), HotspotCategory.Doors, playerPos, seenObjects);
                     }
 
                     // 4. MetalDoor
                     var metalDoors = UnityEngine.Object.FindObjectsOfType<MetalDoor>(true);
                     foreach (var md in metalDoors)
                     {
-                        if (md != null && md.gameObject.scene.name != null && seenObjects.Add(md.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(md.gameObject, "Metal Door", HotspotCategory.Doors));
+                        if (md != null)
+                            TryAddHotspot(md.gameObject, "Metal Door", HotspotCategory.Doors, playerPos, seenObjects);
                     }
 
                     // 5. MetalLockedDoor
                     var metalLocked = UnityEngine.Object.FindObjectsOfType<MetalLockedDoor>(true);
                     foreach (var mld in metalLocked)
                     {
-                        if (mld != null && mld.gameObject.scene.name != null && seenObjects.Add(mld.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(mld.gameObject, "Locked Metal Door", HotspotCategory.Doors));
+                        if (mld != null)
+                            TryAddHotspot(mld.gameObject, "Locked Metal Door", HotspotCategory.Doors, playerPos, seenObjects);
                     }
 
                     // 6. OuterAreaDoor
                     var outerDoors = UnityEngine.Object.FindObjectsOfType<OuterAreaDoor>(true);
                     foreach (var od in outerDoors)
                     {
-                        if (od != null && od.gameObject.scene.name != null && seenObjects.Add(od.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(od.gameObject, "Outer Area Gate", HotspotCategory.Doors));
+                        if (od != null)
+                            TryAddHotspot(od.gameObject, "Outer Area Gate", HotspotCategory.Doors, playerPos, seenObjects);
                     }
 
                     // 7. IntroEventDoor
                     var introDoors = UnityEngine.Object.FindObjectsOfType<IntroEventDoor>(true);
                     foreach (var id in introDoors)
                     {
-                        if (id != null && id.gameObject.scene.name != null && seenObjects.Add(id.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(id.gameObject, "Entrance Gate", HotspotCategory.Doors));
+                        if (id != null)
+                            TryAddHotspot(id.gameObject, "Entrance Gate", HotspotCategory.Doors, playerPos, seenObjects);
                     }
                     break;
 
@@ -460,11 +573,9 @@ namespace KamlaAccessibility.Gameplay
                     var items = UnityEngine.Object.FindObjectsOfType<ItemPicker>(true);
                     foreach (var it in items)
                     {
-                        if (it != null && it.gameObject.scene.name != null &&
-                            (playerTransform == null || !it.transform.IsChildOf(playerTransform)) &&
-                            seenObjects.Add(it.gameObject.GetInstanceID()))
+                        if (it != null && (playerTransform == null || !it.transform.IsChildOf(playerTransform)))
                         {
-                            _currentItems.Add(new HotspotItem(it.gameObject, CleanItemName(it), HotspotCategory.Items));
+                            TryAddHotspot(it.gameObject, CleanItemName(it), HotspotCategory.Items, playerPos, seenObjects);
                         }
                     }
 
@@ -472,11 +583,9 @@ namespace KamlaAccessibility.Gameplay
                     var keys = UnityEngine.Object.FindObjectsOfType<Key>(true);
                     foreach (var k in keys)
                     {
-                        if (k != null && k.gameObject.scene.name != null && !k.HasCollectedKey &&
-                            (playerTransform == null || !k.transform.IsChildOf(playerTransform)) &&
-                            seenObjects.Add(k.gameObject.GetInstanceID()))
+                        if (k != null && !k.HasCollectedKey && (playerTransform == null || !k.transform.IsChildOf(playerTransform)))
                         {
-                            _currentItems.Add(new HotspotItem(k.gameObject, CleanKeyName(k), HotspotCategory.Items));
+                            TryAddHotspot(k.gameObject, CleanKeyName(k), HotspotCategory.Items, playerPos, seenObjects);
                         }
                     }
 
@@ -484,11 +593,9 @@ namespace KamlaAccessibility.Gameplay
                     var books = UnityEngine.Object.FindObjectsOfType<Book>(true);
                     foreach (var b in books)
                     {
-                        if (b != null && b.gameObject.scene.name != null &&
-                            (playerTransform == null || !b.transform.IsChildOf(playerTransform)) &&
-                            seenObjects.Add(b.gameObject.GetInstanceID()))
+                        if (b != null && (playerTransform == null || !b.transform.IsChildOf(playerTransform)))
                         {
-                            _currentItems.Add(new HotspotItem(b.gameObject, "Ancient Prayer Book", HotspotCategory.Items));
+                            TryAddHotspot(b.gameObject, "Ancient Prayer Book", HotspotCategory.Items, playerPos, seenObjects);
                         }
                     }
 
@@ -496,11 +603,9 @@ namespace KamlaAccessibility.Gameplay
                     var notes = UnityEngine.Object.FindObjectsOfType<Note>(true);
                     foreach (var n in notes)
                     {
-                        if (n != null && n.gameObject.scene.name != null &&
-                            (playerTransform == null || !n.transform.IsChildOf(playerTransform)) &&
-                            seenObjects.Add(n.gameObject.GetInstanceID()))
+                        if (n != null && (playerTransform == null || !n.transform.IsChildOf(playerTransform)))
                         {
-                            _currentItems.Add(new HotspotItem(n.gameObject, "Haveli Note", HotspotCategory.Items));
+                            TryAddHotspot(n.gameObject, "Haveli Note", HotspotCategory.Items, playerPos, seenObjects);
                         }
                     }
 
@@ -508,10 +613,10 @@ namespace KamlaAccessibility.Gameplay
                     var courtItems = UnityEngine.Object.FindObjectsOfType<ItemInCourtyard>(true);
                     foreach (var ci in courtItems)
                     {
-                        if (ci != null && ci.gameObject.scene.name != null && seenObjects.Add(ci.gameObject.GetInstanceID()))
+                        if (ci != null)
                         {
                             string rName = FormatRecipeItem(ci.MyItem);
-                            _currentItems.Add(new HotspotItem(ci.gameObject, rName, HotspotCategory.Items));
+                            TryAddHotspot(ci.gameObject, rName, HotspotCategory.Items, playerPos, seenObjects);
                         }
                     }
                     break;
@@ -520,53 +625,53 @@ namespace KamlaAccessibility.Gameplay
                     var almirahs = UnityEngine.Object.FindObjectsOfType<OpenableAlmirah>(true);
                     foreach (var a in almirahs)
                     {
-                        if (a != null && a.gameObject.scene.name != null && seenObjects.Add(a.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(a.gameObject, "Haveli Almirah", HotspotCategory.Containers));
+                        if (a != null)
+                            TryAddHotspot(a.gameObject, "Haveli Almirah", HotspotCategory.Containers, playerPos, seenObjects);
                     }
 
                     var chests = UnityEngine.Object.FindObjectsOfType<OpenableChest>(true);
                     foreach (var c in chests)
                     {
-                        if (c != null && c.gameObject.scene.name != null && seenObjects.Add(c.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(c.gameObject, "Haveli Chest", HotspotCategory.Containers));
+                        if (c != null)
+                            TryAddHotspot(c.gameObject, "Haveli Chest", HotspotCategory.Containers, playerPos, seenObjects);
                     }
 
                     var drawers = UnityEngine.Object.FindObjectsOfType<TableDrawer>(true);
                     foreach (var dr in drawers)
                     {
-                        if (dr != null && dr.gameObject.scene.name != null && seenObjects.Add(dr.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(dr.gameObject, "Table Drawer", HotspotCategory.Containers));
+                        if (dr != null)
+                            TryAddHotspot(dr.gameObject, "Table Drawer", HotspotCategory.Containers, playerPos, seenObjects);
                     }
 
                     var suitcases = UnityEngine.Object.FindObjectsOfType<Suitcase>(true);
                     foreach (var sc in suitcases)
                     {
-                        if (sc != null && sc.gameObject.scene.name != null && seenObjects.Add(sc.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(sc.gameObject, "Combination Suitcase", HotspotCategory.Containers));
+                        if (sc != null)
+                            TryAddHotspot(sc.gameObject, "Combination Suitcase", HotspotCategory.Containers, playerPos, seenObjects);
                     }
                     break;
 
                 case HotspotCategory.RitualAndPuzzles:
                     var havan = GameObject.Find("PlaceCircleCourtyard") ?? GameObject.Find("HavanParticleSystem") ?? GameObject.Find("CourtyardMechanic");
-                    if (havan != null && seenObjects.Add(havan.GetInstanceID()))
-                        _currentItems.Add(new HotspotItem(havan, "Courtyard Havan Altar", HotspotCategory.RitualAndPuzzles));
+                    if (havan != null)
+                        TryAddHotspot(havan, "Courtyard Havan Altar", HotspotCategory.RitualAndPuzzles, playerPos, seenObjects);
 
                     var ganesh = GameObject.Find("GaneshMurtiManager") ?? GameObject.Find("GaneshMurti");
-                    if (ganesh != null && seenObjects.Add(ganesh.GetInstanceID()))
-                        _currentItems.Add(new HotspotItem(ganesh, "Ganesh Idol", HotspotCategory.RitualAndPuzzles));
+                    if (ganesh != null)
+                        TryAddHotspot(ganesh, "Ganesh Idol", HotspotCategory.RitualAndPuzzles, playerPos, seenObjects);
 
                     var bells = UnityEngine.Object.FindObjectsOfType<HangingBell>(true);
                     foreach (var b in bells)
                     {
-                        if (b != null && b.gameObject.scene.name != null && seenObjects.Add(b.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(b.gameObject, "Temple Bell", HotspotCategory.RitualAndPuzzles));
+                        if (b != null)
+                            TryAddHotspot(b.gameObject, "Temple Bell", HotspotCategory.RitualAndPuzzles, playerPos, seenObjects);
                     }
 
                     var bricks = UnityEngine.Object.FindObjectsOfType<PushableBrick>(true);
                     foreach (var br in bricks)
                     {
-                        if (br != null && br.gameObject.scene.name != null && seenObjects.Add(br.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(br.gameObject, "Puzzle Brick", HotspotCategory.RitualAndPuzzles));
+                        if (br != null)
+                            TryAddHotspot(br.gameObject, "Puzzle Brick", HotspotCategory.RitualAndPuzzles, playerPos, seenObjects);
                     }
                     break;
 
@@ -574,22 +679,22 @@ namespace KamlaAccessibility.Gameplay
                     var hides = UnityEngine.Object.FindObjectsOfType<HideDetectionCollider>(true);
                     foreach (var h in hides)
                     {
-                        if (h != null && h.gameObject.scene.name != null && seenObjects.Add(h.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(h.gameObject, "Hiding Spot", HotspotCategory.HidingSpots));
+                        if (h != null)
+                            TryAddHotspot(h.gameObject, "Hiding Spot", HotspotCategory.HidingSpots, playerPos, seenObjects);
                     }
 
                     var almHides = UnityEngine.Object.FindObjectsOfType<OpenableAlmirah>(true);
                     foreach (var al in almHides)
                     {
-                        if (al != null && al.gameObject.scene.name != null && seenObjects.Add(al.gameObject.GetInstanceID()))
-                            _currentItems.Add(new HotspotItem(al.gameObject, "Wardrobe Hiding Spot", HotspotCategory.HidingSpots));
+                        if (al != null)
+                            TryAddHotspot(al.gameObject, "Wardrobe Hiding Spot", HotspotCategory.HidingSpots, playerPos, seenObjects);
                     }
                     break;
 
                 case HotspotCategory.Kamla:
                     var enemy = UnityEngine.Object.FindObjectOfType<Enemy>();
-                    if (enemy != null && enemy.gameObject.activeInHierarchy && seenObjects.Add(enemy.gameObject.GetInstanceID()))
-                        _currentItems.Add(new HotspotItem(enemy.gameObject, "Kamla", HotspotCategory.Kamla));
+                    if (enemy != null)
+                        TryAddHotspot(enemy.gameObject, "Kamla", HotspotCategory.Kamla, playerPos, seenObjects);
                     break;
 
                 case HotspotCategory.AllObjects:
