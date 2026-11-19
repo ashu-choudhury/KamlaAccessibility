@@ -9,9 +9,30 @@ namespace KamlaAccessibility.Gameplay
         internal static bool TryLeave(PlayerMovement player)
         {
             var cover = player.TpScriptRef;
-            if (cover == null || !player.IsHiding || player.IsGettingOut || !player.CanInteract) return false;
-            PuzzleAccessibility.WithInteract(cover.isHidingTrigger, cover);
-            return player.IsGettingOut || !player.IsHiding;
+            if (cover == null || !cover.isActiveAndEnabled || cover.player != player ||
+                !player.IsHiding || player.IsGettingOut || player.teleportingBack ||
+                player.IsKilling || player.isPlayingVid || cover.IsHideKilling) return false;
+
+            bool interactionWasEnabled = player.CanInteract;
+            if (!interactionWasEnabled)
+            {
+                // Recover a stale interaction lock only after reaching this cover's native hiding point.
+                if (player.TeleportPoint == null || player.TeleportPoint != cover.TpPoint ||
+                    Vector3.Distance(player.transform.position, cover.TpPoint.position) > 0.55f)
+                    return false;
+                player.CanInteract = true;
+            }
+            try
+            {
+                // The native exit clears look state. Only scope the interact input.
+                PuzzleAccessibility.WithInteract(cover.isHidingTrigger);
+                return player.IsGettingOut || !player.IsHiding;
+            }
+            finally
+            {
+                if (!interactionWasEnabled && player.IsHiding && !player.IsGettingOut)
+                    player.CanInteract = false;
+            }
         }
 
         public static bool TryFindRoute(PlayerMovement player, HashSet<int> excluded,

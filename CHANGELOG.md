@@ -1,5 +1,9 @@
 # Kamla Accessibility Mod changelog
 
+## 2.0.2
+
+- Enter can recover a stale interaction lock after the player has settled inside a hiding spot and use the game's normal exit. K still reports Kamla's location while hidden.
+
 ## 2.0.1
 
 - F5 and automatic local refresh preserve the selected destination while it still exists in the scene. Delete can retry it after it leaves the local list.
