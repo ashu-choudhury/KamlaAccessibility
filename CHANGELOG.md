@@ -3,6 +3,7 @@
 ## 2.0.2
 
 - Enter can recover a stale interaction lock after the player has settled inside a hiding spot and use the game's normal exit. K still reports Kamla's location while hidden.
+- A newly detected auto-walk obstruction can be announced and focused even if a previous warning just played.
 
 ## 2.0.1
 
