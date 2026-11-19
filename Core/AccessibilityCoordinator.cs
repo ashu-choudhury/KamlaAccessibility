@@ -58,7 +58,7 @@ namespace KamlaAccessibility.Core
                 if (Application.isFocused) _puzzles.AnnounceSuitcaseExit();
 
                 // 4. Gameplay: Hotspots, Auto-walk, Interaction, and Crosshair Look
-                UpdateGameplay();
+                if (!_uiController.OptionsActive) UpdateGameplay();
             }
             catch (Exception ex)
             {
@@ -85,6 +85,7 @@ namespace KamlaAccessibility.Core
         private void OnSceneChanged(string sceneName)
         {
             _hotspotManager.ResetScene();
+            _uiController.ResetOptions();
             _lastCover = null;
             _interactionManager.CloseMenu();
             _interactionDescriber.UpdateTarget(null);
@@ -176,6 +177,11 @@ namespace KamlaAccessibility.Core
         {
             var player = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
             if (player != null && player.IsHiding && player.TpScriptRef != null) _lastCover = player.TpScriptRef;
+            if (player != null && player.IsHiding && !player.IsGettingOut && !player.IsKilling &&
+                Time.timeScale > 0f && Application.isFocused &&
+                (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) &&
+                !HidingController.TryLeave(player))
+                PrismSpeechProvider.Speak("You are still in cover. Try again when the area is clear.", true);
             if (player == null || !player.isActiveAndEnabled || !Application.isFocused ||
                 Time.timeScale <= 0f || player.IsKilling || player.isPlayingVid || player.IsGettingOut || player.IsHiding)
             {
@@ -193,6 +199,9 @@ namespace KamlaAccessibility.Core
                 var cover = _lastCover;
                 _lastCover = null;
                 HidingController.ClearObstructedExit(player, cover);
+                var target = _hotspotManager.Selection;
+                PrismSpeechProvider.Speak(target != null && target.GameObject != null && target.GameObject.activeInHierarchy
+                    ? $"Out of cover. Press Delete to walk to {target.CleanName}." : "Out of cover.", true);
             }
 
             if (_puzzles.UpdateSuitcase(player) || _puzzles.UpdateRitual(player))
@@ -253,6 +262,7 @@ namespace KamlaAccessibility.Core
             string msg = $"Kamla Accessibility Mod Active. Speech backend: {backend}. " +
                          "Hotspot Navigation: Home and End to change category. " +
                          "Page Up and Page Down to cycle objects. " +
+                           "F5 refreshes nearby objects and repeats active footstep directions. " +
                          "Hotspots announce distance and clock direction. Kamla has a directional warning sound. " +
                          "Delete key to auto-walk to selected object. " +
                          "Enter key to activate or interact. " +

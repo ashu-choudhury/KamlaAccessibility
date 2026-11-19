@@ -27,6 +27,7 @@ namespace KamlaAccessibility.Gameplay
         private FootstepSmudgeStick _trail;
         private int _lastTrailBand = -1;
         private float _nextTrailCheck;
+        private bool _footstepCueWasActive;
         private GameObject _lastRecipe;
         private PauseMenuAndRecipeManager _recipeManager;
 
@@ -279,7 +280,20 @@ namespace KamlaAccessibility.Gameplay
         {
             if (Time.unscaledTime < _nextTrailCheck) return;
             _nextTrailCheck = Time.unscaledTime + 0.45f;
-            if (_trail == null) _trail = Object.FindObjectOfType<FootstepSmudgeStick>();
+            var player = Object.FindObjectOfType<PlayerMovement>();
+            string cue = DescribeFootsteps(player);
+            if (cue != null && !_footstepCueWasActive) Say(cue);
+            _footstepCueWasActive = cue != null;
+            if (_trail == null || !_trail.isActiveAndEnabled || !_trail.isActive || !_trail.isInCollisionArea)
+            {
+                _trail = null;
+                foreach (var candidate in Object.FindObjectsOfType<FootstepSmudgeStick>())
+                {
+                    if (!candidate.isActive || !candidate.isInCollisionArea) continue;
+                    _trail = candidate;
+                    break;
+                }
+            }
             if (_trail == null || !_trail.isActive || !_trail.isInCollisionArea ||
                 _trail.percentSlider == null || !_trail.percentSlider.isActiveAndEnabled)
             {
@@ -291,6 +305,19 @@ namespace KamlaAccessibility.Gameplay
             if (band == _lastTrailBand) return;
             _lastTrailBand = band;
             Say($"Footstep clue strength, {band * 10} percent.");
+        }
+
+        internal static string DescribeFootsteps(PlayerMovement player)
+        {
+            if (player == null) return null;
+            var trail = Object.FindObjectOfType<FootStepPuzzleManager>();
+            if (trail == null || !trail.isSoundActive || trail.footstepAudioSource == null ||
+                !trail.footstepAudioSource.activeInHierarchy) return null;
+            Vector3 offset = trail.footstepAudioSource.transform.position - player.transform.position;
+            Vector3 horizontal = NavigationHelper.Flat(offset);
+            int hour = (Mathf.RoundToInt(Vector3.SignedAngle(player.transform.forward, horizontal, Vector3.up) / 30f) + 12) % 12;
+            string level = Mathf.Abs(offset.y) > 1.8f ? (offset.y > 0f ? ", above you" : ", below you") : "";
+            return $"Footsteps at {(hour == 0 ? 12 : hour)} o'clock, {horizontal.magnitude:F1} meters away{level}.";
         }
 
         public void AddOptions(PlayerMovement player, List<InteractionOption> options)
@@ -369,12 +396,23 @@ namespace KamlaAccessibility.Gameplay
                 _ritualProgress = -1;
                 Say("Hold Enter to place the item. Escape cancels.");
             });
-            AddNearby<FootstepSmudgeStick>(player, options, "Check the footstep clue", trail =>
+            AddNearby<FootstepSmudgeStick>(player, options,
+                trail => trail.isNear ? "Reveal the Kalash pot" : "Listen for footsteps", trail =>
             {
-                if (!trail.isActive) { Say("The footstep trail is inactive."); return; }
-                if (trail.isNear) WithInteract(trail.Update);
-                if (trail.percentSlider != null && trail.percentSlider.isActiveAndEnabled)
-                    Say($"Footstep clue strength, {Mathf.RoundToInt(trail.percentSlider.fillAmount * 100f)} percent.");
+                if (!trail.isActive) { Say("Bring the smudge stick to start the footstep clue."); return; }
+                if (trail.isNear)
+                {
+                    if (!player.IsHavingItem || player.ItemContainer == null || player.ItemContainer.childCount == 0)
+                    {
+                        Say("Carry the smudge stick to the end of the footstep trail.");
+                        return;
+                    }
+                    WithInteract(trail.unlockKalashPot);
+                    if (trail.footstepMan != null && trail.footstepMan.kalashPot != null &&
+                        trail.footstepMan.kalashPot.activeInHierarchy) Say("Kalash pot revealed. Refresh with F5 to find it.");
+                    return;
+                }
+                Say(DescribeFootsteps(player) ?? "Move around with the lit smudge stick and listen for a change in the footstep clue.");
             });
             AddNearby<FootstepKey>(player, options, "Collect the footstep key", key => WithInteract(key.Update, key));
             AddNearby<Handpump>(player, options, "Use handpump", pump =>
@@ -441,11 +479,25 @@ namespace KamlaAccessibility.Gameplay
                 WithInteract(door.unlockMech, door);
                 Say(door.unlocked ? "The metal door is unlocked." : "The metal door is locked.");
             });
-            AddNearby<CourtYardMechanic>(player, options, "Begin the final ritual", court =>
+            AddNearby<CourtYardMechanic>(player, options,
+                court => court.isFinale ? "Begin the final ritual" : "Check ritual progress", court =>
             {
-                if (!court.isNear || !court.isFinale)
+                if (!court.isFinale)
                 {
-                    Say("Finish the ritual preparations and return here.");
+                    var remaining = new List<string>();
+                    foreach (var offering in Object.FindObjectsOfType<ItemInCourtyard>())
+                    {
+                        if (!IsRitualPlaced(offering))
+                            remaining.Add(HotspotManager.FormatRecipeItem(offering.MyItem));
+                    }
+                    Say(remaining.Count > 0
+                        ? $"Offerings still needed. {string.Join(", ", remaining)}."
+                        : "The offerings are in place. Wait for the ritual prompt.");
+                    return;
+                }
+                if (!court.isNear)
+                {
+                    Say("Move closer to the center of the courtyard.");
                     return;
                 }
                 WithInteract(court.Update);
@@ -624,6 +676,7 @@ namespace KamlaAccessibility.Gameplay
             _trail = null;
             _lastTrailBand = -1;
             _nextTrailCheck = 0f;
+            _footstepCueWasActive = false;
             _lastRecipe = null;
             _recipeManager = null;
         }

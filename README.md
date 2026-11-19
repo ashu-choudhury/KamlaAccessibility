@@ -1,7 +1,9 @@
 # Kamla Accessibility Mod
 
-A full accessibility mod for **Kamla**, an Indian survival horror game developed by Mad-Mantra Games. 
+An accessibility mod for **Kamla**, an Indian survival horror game developed by Mad-Mantra Games.
 Built for blind and visually impaired players, this mod integrates the **Prism** speech and braille library for hotspot browsing, auto-walk, contextual interactions, automatic hiding, status reports, subtitles, and graphics controls.
+
+See [CHANGELOG.md](CHANGELOG.md) for changes by version. A continuous screen-reader-only finish through all Haveli puzzles and the ending is still unverified.
 
 ---
 
@@ -22,13 +24,14 @@ Built for blind and visually impaired players, this mod integrates the **Prism**
   - When Kamla starts chasing, the mod searches for a nearby hiding entrance with a walkable route and uses the game's sprint and hiding controls. Normal stamina, obstacles, and hiding conditions apply.
   - Take over with your movement controls or press `Delete` to cancel. Automatic hiding waits for the next chase after cancellation.
   - To turn it off, set `AutomaticHiding` to `false` under `[KamlaAccessibility]` in `UserData\MelonPreferences.cfg` while the game is closed.
-- **Health & Player Status (`H` Key)**:
-  - Reports remaining lives, stamina percentage, carried items, current room/area, and Kamla's active threat status (distance, clock direction, and whether roaming or chasing).
+- **Lives and Kamla Location**:
+  - `L` reports remaining lives. `K` reports Kamla's distance and clock direction, including whether she's above or below you when relevant.
 - **One-Key Graphics Minimizer (`F10`)**:
   - Automatically minimizes all visual quality settings to the lowest possible level (disables shadows, reflections, fog, anti-aliasing; lowers texture resolution) to ensure maximum FPS on any machine without touching audio settings.
 - **Full Menu & Settings Accessibility**:
-  - 100% mouse-free navigation in Main Menu, Settings, Difficulty, Pause Menu, and Death screen.
+  - Keyboard navigation in Main Menu, Settings, Difficulty, Pause Menu, and Death screen.
   - Arrow keys and Tab auto-focus buttons, announce toggle states, and speak real-time slider percentages (e.g. Volume, Brightness).
+  - In Options, use Up and Down or Tab and Shift+Tab to browse, Left and Right to change a setting, and Enter or Space to activate a button or toggle. Save and Reset confirmations have their own keyboard focus.
 - **Subtitles & Mantra Reader**:
   - Real-time narration of on-screen dialogue, exorcism mantras (*Om Tryambakam* chants), and story notes.
 
@@ -47,6 +50,7 @@ Built for blind and visually impaired players, this mod integrates the **Prism**
 | `L` | Announce remaining lives |
 | `K` | Announce Kamla's distance, clock direction, and whether she is above or below you |
 | `F3` | Toggle automatic subtitle, prompt, and crosshair narration |
+| `F5` | Refresh nearby objects in the current category and repeat any active footstep cue |
 | `F10` | **Minimize Graphic Settings** for maximum performance |
 | `Keypad 0` / `Alt + F` | Scan nearby radar (distance & clock direction) |
 | `Keypad 8` / `Alt + C` | Announce facing compass heading |
@@ -65,6 +69,8 @@ Built for blind and visually impaired players, this mod integrates the **Prism**
 - When movement is obstructed, the mod announces the obstacle or missing footing. After auto-walk announces arrival, Enter uses the selected object. At the main gate, Enter opens the gate and walks through it. At the Haveli entrance, Enter uses the game's scene entrance.
 - Browse **Ritual and Puzzles** to find nearby puzzle objects and revealed clues. In the suitcase, type the combination on the number row or number pad, then press Enter to dial it. Backspace corrects a digit. Left and Right still select a wheel, Up and Down turn it, and Escape leaves. Hold Enter when prompted for the handpump or ritual placement. The footstep puzzle announces the game's visible clue meter.
 - In the Outer Area, the **Handpump** and **Fire** hotspots report the puzzle state. After placing the **Steel water pot** at the pump, hold Enter to fill it. Use the pump action again to pick up the filled pot. After the first pour, refill it for the second.
+- At the **Courtyard ritual altar**, choose **Check ritual progress** to hear the remaining offerings. The action changes to **Begin the final ritual** when the game makes it available.
+- When the game's footstep cue becomes active, the mod announces its direction. Use F5 to repeat it. Follow the spoken strength readings and choose **Reveal the Kalash pot** when within reach.
 - F3 affects automatic narration. Menus, explicit inspection, puzzle control feedback, and obstacle warnings remain available.
 
 Kamla's warning sound is adapted from `bong_001.ogg` in Kenney's [Interface Sounds](https://opengameart.org/content/interface-sounds), released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).

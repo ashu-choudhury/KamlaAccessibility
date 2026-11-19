@@ -76,8 +76,12 @@ namespace KamlaAccessibility.Gameplay
                     {
                         bool pickedUp = TryPickUp(player, item);
                         AudioCueGenerator.PlayNavSelect();
-                        PrismSpeechProvider.Speak(pickedUp ? $"Picked up {itemName}." :
-                            $"Could not pick up {itemName}. Move closer or check what you are carrying.", true);
+                        string feedback = pickedUp ? $"Picked up {itemName}." :
+                            player.enemyRef != null && player.enemyRef.IsChasing
+                                ? $"Kamla is chasing you. Get to safety before picking up {itemName}." :
+                            player.IsHavingItem ? $"You are already carrying an item. Put it down before picking up {itemName}." :
+                            $"Could not pick up {itemName} from here.";
+                        PrismSpeechProvider.Speak(feedback, true);
                     }, item.gameObject));
                 }
             }

@@ -208,6 +208,8 @@ namespace KamlaAccessibility.Gameplay
         private TPScript _hideDestination;
         private Vector2 _routeInput;
         private Vector3 _blockedDirection;
+        private float _nextLocalRefresh;
+        private PlayerMovement _localObserver;
         private Vector3? _failedApproach;
         private GameObject _arrivedTarget;
         private bool _passingGate;
@@ -236,6 +238,16 @@ namespace KamlaAccessibility.Gameplay
 
         public void HandleInput(PlayerMovement player)
         {
+            if (Input.GetKeyDown(KeyCode.F5))
+            {
+                RefreshLocalHotspots(player);
+                var category = Categories[_currentCategoryIndex];
+                string name = FormatCategoryName(category);
+                string count = _currentItems.Count == 0 ? $"No local {name.ToLowerInvariant()} nearby." :
+                    $"{name}. {_currentItems.Count} local objects. Page Up and Page Down browse.";
+                PrismSpeechProvider.Speak($"{count} {PuzzleAccessibility.DescribeFootsteps(player)}".Trim(), true);
+            }
+            else if (!IsAutoWalking && Time.unscaledTime >= _nextLocalRefresh) RefreshLocalHotspots(player);
             if (Input.GetKeyDown(KeyCode.Home)) CycleCategory(player.transform, -1);
             else if (Input.GetKeyDown(KeyCode.End)) CycleCategory(player.transform, 1);
 
@@ -282,6 +294,18 @@ namespace KamlaAccessibility.Gameplay
             }
 
             if (IsAutoWalking) UpdateAutoWalk(player);
+        }
+
+        private void RefreshLocalHotspots(PlayerMovement player)
+        {
+            _nextLocalRefresh = Time.unscaledTime + 1f;
+            ScanCategory(player.transform, Categories[_currentCategoryIndex]);
+            // The local list follows the player, but Delete can retry a selected destination after a chase.
+            if (_selectedItem != null && (_selectedItem.GameObject == null ||
+                !_selectedItem.GameObject.activeInHierarchy || _selectedItem.GameObject.scene != player.gameObject.scene))
+                _selectedItem = null;
+            if (_arrivedTarget != null && !PuzzleAccessibility.CanReach(player, _arrivedTarget, 3.8f))
+                _arrivedTarget = null;
         }
 
         private void CycleCategory(Transform playerTransform, int direction)
@@ -410,6 +434,13 @@ namespace KamlaAccessibility.Gameplay
             }
             if (_targetItem.GameObject == null || !_targetItem.GameObject.activeInHierarchy)
             {
+                var encounter = _targetItem.GameObject != null
+                    ? _targetItem.GameObject.GetComponent<ColliderForCryingEvent>() : null;
+                if (encounter != null && encounter.cryingKamlaMan != null && encounter.cryingKamlaMan.ActivateEvent)
+                {
+                    StopAutoWalk("The crying encounter has started.");
+                    return;
+                }
                 FailRoute("The target is no longer available.");
                 return;
             }
@@ -438,6 +469,7 @@ namespace KamlaAccessibility.Gameplay
                 if (_hideDestination == null)
                 {
                     if (_passingGate) StopAutoWalk("Through the main gate.");
+                    else if (CanPickUpFromHere(player, _targetItem)) ArriveAtTarget(player, _targetItem);
                     else if (!_failedApproach.HasValue &&
                             NavigationHelper.TryFindPath(player, _targetItem, out var approach, feet))
                     {
@@ -449,7 +481,7 @@ namespace KamlaAccessibility.Gameplay
                 }
                 else if (HidingController.TryEnter(player, _hideDestination))
                 {
-                    StopAutoWalk($"Hidden. Use your normal interact control to leave.");
+                    StopAutoWalk("Hidden. Press Enter to leave cover when the area is clear.");
                 }
                 else
                 {
@@ -470,14 +502,19 @@ namespace KamlaAccessibility.Gameplay
             }
 
             _stuckTimer += Time.deltaTime;
-            if (_stuckTimer < 1f) return;
+            if (_stuckTimer < (_hideDestination != null ? 0.45f : 1f)) return;
 
             float moved = Vector3.Distance(position, _lastRecordedPos);
             _lastRecordedPos = position;
             _stuckTimer = 0f;
-            if (moved >= 0.18f)
+            if (moved >= (_hideDestination != null ? 0.12f : 0.18f))
             {
                 _retriedBlockedPath = false;
+                return;
+            }
+            if (_hideDestination == null && !_passingGate && CanPickUpFromHere(player, _targetItem))
+            {
+                ArriveAtTarget(player, _targetItem);
                 return;
             }
 
@@ -486,10 +523,14 @@ namespace KamlaAccessibility.Gameplay
                 if (direction.sqrMagnitude > 0.001f && NavigationHelper.TryOpenBlockingDoor(player, direction.normalized)) return;
                 _retriedBlockedPath = true;
 
-                List<Vector3> route;
-                bool found = _hideDestination != null
-                    ? NavigationHelper.TryFindPath(player, _targetItem.Position, 0f, out route)
-                    : NavigationHelper.TryFindPath(player, _targetItem, out route, _failedApproach ?? _waypoints[_waypoints.Count - 1]);
+                List<Vector3> route = null;
+                bool found = direction.sqrMagnitude > 0.001f &&
+                    NavigationHelper.TryBypassRouteObstruction(player, direction.normalized, _waypoints, _currentWaypointIndex, out route);
+                if (!found) found = _hideDestination != null
+                    ? NavigationHelper.TryFindCoverDetour(player, _targetItem.Position, out route)
+                    : NavigationHelper.TryFindPath(player, _targetItem, out route,
+                        preferPhysicalRoute: direction.sqrMagnitude > 0.001f &&
+                            NavigationHelper.FindBlockingCollider(player, direction.normalized, 0.85f) != null);
                 if (found)
                 {
                     _waypoints = route;
@@ -498,11 +539,37 @@ namespace KamlaAccessibility.Gameplay
                 }
             }
             _blockedDirection = direction;
+            if (_hideDestination == null && direction.sqrMagnitude > 0.001f)
+            {
+                var obstacle = NavigationHelper.FindBlockingCollider(player, direction.normalized, 0.85f);
+                var brick = obstacle != null ? obstacle.GetComponentInParent<PushableBrick>() : null;
+                if (brick != null && PuzzleAccessibility.CanReach(player, brick.gameObject, 3f))
+                {
+                    bool canPush = !brick.isPushed && brick.brickMan != null && brick.brickMan.pushEnabled;
+                    FailRoute(canPush
+                        ? $"A {PuzzleAccessibility.DescribeBrick(brick)} blocks the route. Press Enter to push it, then Delete to retry."
+                        : $"A {PuzzleAccessibility.DescribeBrick(brick)} blocks the route. The puzzle mechanism must be activated first.");
+                    if (canPush) _arrivedTarget = brick.gameObject;
+                    _blockedDirection = Vector3.zero;
+                    return;
+                }
+            }
             FailRoute($"The route is blocked before {_targetItem.CleanName}.");
+        }
+
+        private static bool CanPickUpFromHere(PlayerMovement player, HotspotItem target)
+        {
+            var item = target.GameObject.GetComponent<ItemPicker>();
+            return item != null && PuzzleAccessibility.CanReach(player, item.gameObject, 3f) && item.canPickItem();
         }
 
         private void ArriveAtTarget(PlayerMovement player, HotspotItem target)
         {
+            if (target.GameObject.GetComponent<ColliderForCryingEvent>() != null)
+            {
+                StopAutoWalk("The crying encounter has started.");
+                return;
+            }
             Vector3 face = NavigationHelper.Flat(target.Position - player.transform.position);
             if (face.sqrMagnitude > 0.01f) player.transform.rotation = Quaternion.LookRotation(face);
             StopAutoWalk($"At {target.CleanName}. Press Enter to {(target.IsClue ? "read it" : "use it")}.");
@@ -564,16 +631,31 @@ namespace KamlaAccessibility.Gameplay
             bool exterior = string.Equals(go.scene.name, "Outer Area", StringComparison.OrdinalIgnoreCase);
             bool outdoorLandmark = exterior && (go.GetComponent<MainGateOuterArea>() != null ||
                 go.GetComponent<Handpump>() != null || go.GetComponent<FireBox>() != null);
-            if (Vector3.Distance(playerPos, item.Position) <= (outdoorLandmark ? 95f : 50f) &&
+            float range = outdoorLandmark ? 95f : exterior ? 18f : 12f;
+            if (Vector3.Distance(playerPos, item.Position) <= range && IsLocal(item, playerPos, range, exterior) &&
                 seenObjects.Add(go.GetInstanceID()))
             {
                 _currentItems.Add(item);
             }
         }
 
+        private bool IsLocal(HotspotItem item, Vector3 position, float range, bool exterior)
+        {
+            if (_localObserver == null) return false;
+            if (!exterior && Mathf.Abs(item.Position.y - position.y) > 2.1f) return false;
+            Vector3 eyes = _localObserver.mainCam != null ? _localObserver.mainCam.transform.position : position;
+            if (item.ApproachPoint != null && item.GameObject.GetComponent<FootstepSmudgeStick>() is { } trail && trail != null)
+                return trail.isNear || !Physics.Linecast(eyes, item.Position, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+            if (PuzzleAccessibility.CanReachFrom(_localObserver, item.GameObject, position, eyes, range)) return true;
+            // A nearby door may expose a trigger at its frame while the closed leaf blocks its center.
+            return item.Category == HotspotCategory.Doors && Vector3.Distance(item.Position, position) < 2.1f &&
+                   PuzzleAccessibility.CanReachFrom(_localObserver, item.GameObject, position, position, range);
+        }
+
         private void ScanCategory(Transform playerTransform, HotspotCategory category)
         {
             _currentItems.Clear();
+            _localObserver = playerTransform.GetComponent<PlayerMovement>();
             Vector3 playerPos = playerTransform.position;
             var seenObjects = new HashSet<int>();
             if (category == HotspotCategory.AllObjects)
@@ -749,6 +831,9 @@ namespace KamlaAccessibility.Gameplay
                         TryAddHotspot(court.gameObject, "Courtyard ritual altar", category, playerPos, seenObjects);
                     foreach (var altar in UnityEngine.Object.FindObjectsOfType<GaneshMurtiManager>())
                         TryAddHotspot(altar.gameObject, "Ganesh altar", category, playerPos, seenObjects);
+                    foreach (var encounter in UnityEngine.Object.FindObjectsOfType<ColliderForCryingEvent>())
+                        if (encounter.cryingKamlaMan != null && !encounter.cryingKamlaMan.ActivateEvent)
+                            TryAddHotspot(encounter.gameObject, "Sound of crying", category, playerPos, seenObjects);
 
                     var bells = UnityEngine.Object.FindObjectsOfType<HangingBell>(true);
                     foreach (var b in bells)
@@ -773,8 +858,12 @@ namespace KamlaAccessibility.Gameplay
                     foreach (var puzzle in UnityEngine.Object.FindObjectsOfType<StatuePuzzleManager>())
                         AddClueHotspots(puzzle.numberDecals, "Statue clue", playerPos, seenObjects);
                     foreach (var trail in UnityEngine.Object.FindObjectsOfType<FootstepSmudgeStick>())
-                        if (trail.isActive)
-                            TryAddHotspot(trail.gameObject, "Footstep trail", category, playerPos, seenObjects);
+                    {
+                        var manager = trail.footstepMan;
+                        if (trail.isActive && manager != null && manager.isSoundActive && manager.footstepAudioSource != null)
+                            TryAddHotspot(trail.gameObject, "Footstep trail", category, playerPos, seenObjects,
+                                manager.footstepAudioSource.transform);
+                    }
                     foreach (var key in UnityEngine.Object.FindObjectsOfType<FootstepKey>())
                         TryAddHotspot(key.gameObject, "Footstep key", category, playerPos, seenObjects);
                     foreach (var pump in UnityEngine.Object.FindObjectsOfType<Handpump>())
