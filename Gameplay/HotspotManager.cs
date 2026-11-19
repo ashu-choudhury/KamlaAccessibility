@@ -197,12 +197,15 @@ namespace KamlaAccessibility.Gameplay
 
         private HotspotItem _targetItem;
         private List<Vector3> _waypoints;
+        private Vector3 _plannedTargetPosition;
         private int _currentWaypointIndex;
         private Vector3 _lastRecordedPos;
         private float _stuckTimer;
         private float _hideEntryTimer;
         private bool _retriedBlockedPath;
-        private bool _handledChase;
+        private bool _handledThreat;
+        private bool _retryHiding;
+        private bool _failedNearbyCoverSearch;
         private readonly HashSet<int> _triedHidingSpots = new HashSet<int>();
         private PlayerMovement _routePlayer;
         private TPScript _hideDestination;
@@ -214,6 +217,7 @@ namespace KamlaAccessibility.Gameplay
         private GameObject _arrivedTarget;
         private bool _passingGate;
         private float _gateWaitUntil;
+        private float _blockedDoorWaitUntil;
 
         internal GameObject ArrivedTarget => _arrivedTarget;
 
@@ -256,36 +260,54 @@ namespace KamlaAccessibility.Gameplay
 
             var input = PlayerInputManager.Instance;
             bool manualMove = (input != null && input.MoveInput.sqrMagnitude > 0.04f) || Input.GetKeyDown(KeyCode.Space);
+            UpdateWalking(player, manualMove, Input.GetKeyDown(KeyCode.Delete));
+        }
+
+        private void UpdateWalking(PlayerMovement player, bool manualMove, bool delete)
+        {
             if (manualMove) _arrivedTarget = null;
             var enemy = player.enemyRef;
-            bool chasing = enemy != null && enemy.isActiveAndEnabled && enemy.IsChasing;
-            if (!chasing && _hideDestination == null)
+            if (manualMove || delete || !ModConfig.AutomaticHiding || enemy == null || !enemy.isActiveAndEnabled)
+                _retryHiding = false;
+            bool threatened = ModConfig.AutomaticHiding && HidingController.IsThreatNearby(player, enemy, _handledThreat);
+            if (!threatened && !_retryHiding && _hideDestination == null)
             {
-                _handledChase = false;
+                _handledThreat = false;
+                _failedNearbyCoverSearch = false;
                 _triedHidingSpots.Clear();
             }
 
-            bool delete = Input.GetKeyDown(KeyCode.Delete);
+            if (threatened && enemy.IsChasing && _failedNearbyCoverSearch)
+            {
+                _handledThreat = false;
+                _failedNearbyCoverSearch = false;
+            }
+
             if (IsAutoWalking && (delete || manualMove))
             {
+                bool takingOverFromHiding = _hideDestination != null;
                 StopAutoWalk("Auto-walk cancelled.");
-                _handledChase = chasing;
+                if (takingOverFromHiding) _handledThreat = threatened;
                 return;
             }
 
-            if (chasing && !_handledChase && !manualMove && ModConfig.AutomaticHiding)
+            if ((_retryHiding || threatened && !_handledThreat) && !manualMove && player.CanInteract)
             {
-                _handledChase = true;
+                _handledThreat = true;
+                string warning = _retryHiding ? "Trying another hiding spot." :
+                    enemy.IsChasing ? "Kamla is chasing you." : "Kamla is close.";
+                _retryHiding = false;
                 if (HidingController.TryFindRoute(player, _triedHidingSpots, out var spot, out var route))
                 {
                     _triedHidingSpots.Add(spot.GetInstanceID());
                     var target = new HotspotItem(spot.gameObject, HidingController.GetName(spot), HotspotCategory.HidingSpots, spot.BPoint);
                     BeginRoute(player, target, route, spot);
-                    PrismSpeechProvider.Speak($"Kamla is chasing you. Heading for {target.CleanName}.", true);
+                    PrismSpeechProvider.Speak($"{warning} Heading for {target.CleanName}.", true);
                 }
                 else
                 {
-                    PrismSpeechProvider.Speak("Kamla is chasing you. No reachable hiding spot nearby.", true);
+                    _failedNearbyCoverSearch = !enemy.IsChasing;
+                    PrismSpeechProvider.Speak($"{warning} No reachable hiding spot nearby.", true);
                 }
             }
             else if (delete)
@@ -406,15 +428,33 @@ namespace KamlaAccessibility.Gameplay
             PrismSpeechProvider.Speak($"Walking to {target.CleanName}. First direction, {clock} o'clock.", true);
         }
 
+        internal void FollowFootsteps(PlayerMovement player, FootstepSmudgeStick trail)
+        {
+            var source = trail.footstepMan?.footstepAudioSource;
+            if (trail.isNear || !player.IsHavingItem || source == null ||
+                !source.activeInHierarchy || !trail.footstepMan.isSoundActive)
+            {
+                PrismSpeechProvider.Speak("The footstep trail is unavailable right now.", true);
+                return;
+            }
+
+            _selectedItem = new HotspotItem(trail.gameObject, "Footstep trail", HotspotCategory.RitualAndPuzzles,
+                source.transform);
+            StartAutoWalk(player);
+            if (!IsAutoWalking) PrismSpeechProvider.Speak(PuzzleAccessibility.DescribeFootsteps(player), false);
+        }
+
         private void BeginRoute(PlayerMovement player, HotspotItem target, List<Vector3> route, TPScript hideDestination = null)
         {
             _routePlayer = player;
             _targetItem = target;
             _waypoints = route;
+            _plannedTargetPosition = target.Position;
             _hideDestination = hideDestination;
             _currentWaypointIndex = 0;
             _lastRecordedPos = player.transform.position;
             _stuckTimer = 0f;
+            _blockedDoorWaitUntil = 0f;
             _hideEntryTimer = 0f;
             _retriedBlockedPath = false;
             _failedApproach = null;
@@ -444,6 +484,13 @@ namespace KamlaAccessibility.Gameplay
                 FailRoute("The target is no longer available.");
                 return;
             }
+            if (_hideDestination != null && _hideDestination.IsNear &&
+                (_hideDestination.isRayLooking || PuzzleAccessibility.CanReach(player, _hideDestination.gameObject, 2f)) &&
+                HidingController.TryEnter(player, _hideDestination))
+            {
+                OnHidingEntered();
+                return;
+            }
             if (!_passingGate && _hideDestination == null && NavigationHelper.IsAtInteraction(player, _targetItem))
             {
                 ArriveAtTarget(player, _targetItem);
@@ -454,6 +501,24 @@ namespace KamlaAccessibility.Gameplay
             Vector3 position = player.transform.position;
             Vector3 feet = NavigationHelper.GetFeet(controller);
             _routeInput = Vector2.zero;
+            if ((_targetItem.Position - _plannedTargetPosition).sqrMagnitude > 0.75f * 0.75f &&
+                _targetItem.GameObject.GetComponent<ItemPicker>() != null)
+            {
+                if (!NavigationHelper.TryFindPath(player, _targetItem, out var updatedRoute))
+                {
+                    FailRoute($"{_targetItem.CleanName} moved. No walkable route to its new location. Press Delete to retry.");
+                    return;
+                }
+
+                _waypoints = updatedRoute;
+                _currentWaypointIndex = 0;
+                _plannedTargetPosition = _targetItem.Position;
+                _lastRecordedPos = position;
+                _stuckTimer = 0f;
+                _blockedDoorWaitUntil = 0f;
+                _retriedBlockedPath = false;
+                _failedApproach = null;
+            }
             const float finalTolerance = 0.12f;
 
             while (_currentWaypointIndex < _waypoints.Count)
@@ -481,7 +546,7 @@ namespace KamlaAccessibility.Gameplay
                 }
                 else if (HidingController.TryEnter(player, _hideDestination))
                 {
-                    StopAutoWalk("Hidden. Press Enter to leave cover when the area is clear.");
+                    OnHidingEntered();
                 }
                 else
                 {
@@ -509,6 +574,7 @@ namespace KamlaAccessibility.Gameplay
             _stuckTimer = 0f;
             if (moved >= (_hideDestination != null ? 0.12f : 0.18f))
             {
+                _blockedDoorWaitUntil = 0f;
                 _retriedBlockedPath = false;
                 return;
             }
@@ -520,7 +586,13 @@ namespace KamlaAccessibility.Gameplay
 
             if (!_passingGate && !_retriedBlockedPath)
             {
-                if (direction.sqrMagnitude > 0.001f && NavigationHelper.TryOpenBlockingDoor(player, direction.normalized)) return;
+                if (direction.sqrMagnitude > 0.001f &&
+                    (_blockedDoorWaitUntil == 0f || Time.unscaledTime < _blockedDoorWaitUntil) &&
+                    NavigationHelper.TryOpenBlockingDoor(player, direction.normalized))
+                {
+                    if (_blockedDoorWaitUntil == 0f) _blockedDoorWaitUntil = Time.unscaledTime + 2f;
+                    return;
+                }
                 _retriedBlockedPath = true;
 
                 List<Vector3> route = null;
@@ -570,8 +642,12 @@ namespace KamlaAccessibility.Gameplay
                 StopAutoWalk("The crying encounter has started.");
                 return;
             }
-            Vector3 face = NavigationHelper.Flat(target.Position - player.transform.position);
-            if (face.sqrMagnitude > 0.01f) player.transform.rotation = Quaternion.LookRotation(face);
+            // Turning the camera can move the carried smudge stick out of the reveal area.
+            if (target.GameObject.GetComponent<FootstepSmudgeStick>() == null)
+            {
+                Vector3 face = NavigationHelper.Flat(target.Position - player.transform.position);
+                if (face.sqrMagnitude > 0.01f) player.transform.rotation = Quaternion.LookRotation(face);
+            }
             StopAutoWalk($"At {target.CleanName}. Press Enter to {(target.IsClue ? "read it" : "use it")}.");
             _arrivedTarget = target.GameObject;
         }
@@ -591,14 +667,16 @@ namespace KamlaAccessibility.Gameplay
         private void FailRoute(string message)
         {
             if (_hideDestination != null && _triedHidingSpots.Count < 3)
-                _handledChase = false;
+                _retryHiding = true;
             StopAutoWalk(message);
         }
 
         public void ResetScene()
         {
             StopAutoWalk();
-            _handledChase = false;
+            _handledThreat = false;
+            _retryHiding = false;
+            _failedNearbyCoverSearch = false;
             _triedHidingSpots.Clear();
             _blockedDirection = Vector3.zero;
             _selectedItem = null;
@@ -621,6 +699,12 @@ namespace KamlaAccessibility.Gameplay
                 AudioCueGenerator.PlayNavSelect();
                 PrismSpeechProvider.Speak(message, true);
             }
+        }
+
+        internal void OnHidingEntered()
+        {
+            if (IsAutoWalking)
+                StopAutoWalk(_hideDestination != null ? "Hidden. Press Enter to leave cover when the area is clear." : null);
         }
         private void TryAddHotspot(GameObject go, string cleanName, HotspotCategory cat, Vector3 playerPos,
             HashSet<int> seenObjects, Transform approachPoint = null, bool isClue = false)
@@ -784,16 +868,6 @@ namespace KamlaAccessibility.Gameplay
                         }
                     }
 
-                    // 5. ItemInCourtyard
-                    var courtItems = UnityEngine.Object.FindObjectsOfType<ItemInCourtyard>(true);
-                    foreach (var ci in courtItems)
-                    {
-                        if (ci != null)
-                        {
-                            string rName = FormatRecipeItem(ci.MyItem);
-                            TryAddHotspot(ci.gameObject, rName, HotspotCategory.Items, playerPos, seenObjects);
-                        }
-                    }
                     break;
 
                 case HotspotCategory.Containers:
@@ -829,6 +903,9 @@ namespace KamlaAccessibility.Gameplay
                 case HotspotCategory.RitualAndPuzzles:
                     foreach (var court in UnityEngine.Object.FindObjectsOfType<CourtYardMechanic>())
                         TryAddHotspot(court.gameObject, "Courtyard ritual altar", category, playerPos, seenObjects);
+                    foreach (var circle in UnityEngine.Object.FindObjectsOfType<ItemInCourtyard>())
+                        TryAddHotspot(circle.gameObject, $"{FormatRecipeItem(circle.MyItem)} offering circle",
+                            category, playerPos, seenObjects);
                     foreach (var altar in UnityEngine.Object.FindObjectsOfType<GaneshMurtiManager>())
                         TryAddHotspot(altar.gameObject, "Ganesh altar", category, playerPos, seenObjects);
                     foreach (var encounter in UnityEngine.Object.FindObjectsOfType<ColliderForCryingEvent>())

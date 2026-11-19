@@ -6,12 +6,55 @@ namespace KamlaAccessibility.Gameplay
 {
     public static class HidingController
     {
+        private const float NearbyDistance = 10f;
+        private const float ClearDistance = 14f;
+        private const float SameFloorHeight = 1.8f;
+
+        internal static bool IsThreatNearby(PlayerMovement player, Enemy enemy, bool alreadyHandled)
+        {
+            if (enemy == null || !enemy.isActiveAndEnabled) return false;
+            if (enemy.IsChasing) return true;
+
+            Vector3 offset = enemy.transform.position - player.transform.position;
+            float distance = alreadyHandled ? ClearDistance : NearbyDistance;
+            if (Mathf.Abs(offset.y) > SameFloorHeight || NavigationHelper.Flat(offset).sqrMagnitude > distance * distance)
+                return false;
+
+            // Nearby Kamla should only start a new retreat if there is a clear line to her on this floor.
+            if (alreadyHandled) return true;
+            Vector3 eyes = player.mainCam != null ? player.mainCam.transform.position : player.transform.position;
+            Vector3 target = enemy.transform.position + Vector3.up * 0.65f;
+            return !Physics.Linecast(eyes, target, out var hit, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore) ||
+                   hit.collider.transform.IsChildOf(enemy.transform);
+        }
+
         internal static bool TryLeave(PlayerMovement player)
         {
             var cover = player.TpScriptRef;
-            if (cover == null || !player.IsHiding || player.IsGettingOut || !player.CanInteract) return false;
-            PuzzleAccessibility.WithInteract(cover.isHidingTrigger, cover);
-            return player.IsGettingOut || !player.IsHiding;
+            if (cover == null || !cover.isActiveAndEnabled || cover.player != player ||
+                !player.IsHiding || player.IsGettingOut || player.teleportingBack ||
+                player.IsKilling || player.isPlayingVid || cover.IsHideKilling) return false;
+
+            bool interactionWasEnabled = player.CanInteract;
+            if (!interactionWasEnabled)
+            {
+                // Recover a stale interaction lock only after reaching this cover's native hiding point.
+                if (player.TeleportPoint == null || player.TeleportPoint != cover.TpPoint ||
+                    Vector3.Distance(player.transform.position, cover.TpPoint.position) > 0.55f)
+                    return false;
+                player.CanInteract = true;
+            }
+            try
+            {
+                // The native exit clears look state. Only scope the interact input.
+                PuzzleAccessibility.WithInteract(cover.isHidingTrigger);
+                return player.IsGettingOut || !player.IsHiding;
+            }
+            finally
+            {
+                if (!interactionWasEnabled && player.IsHiding && !player.IsGettingOut)
+                    player.CanInteract = false;
+            }
         }
 
         public static bool TryFindRoute(PlayerMovement player, HashSet<int> excluded,

@@ -1,5 +1,30 @@
 # Kamla Accessibility Mod changelog
 
+## 2.0.5
+
+- Auto-hide starts when Kamla is close and unobstructed on the same floor, or when she starts chasing. The player uses normal sprinting and enters as soon as the game allows it.
+- If a route to cover is blocked, auto-hide checks another spot, even if the retreat has already broken line of sight.
+- After cancellation or leaving cover, auto-hide waits for the immediate danger to clear before starting another retreat.
+
+## 2.0.4
+
+- Auto-walk gives a blocking door leaf time to finish opening before looking for another route.
+- While carrying the smudge stick, choose **Follow the footstep trail** to walk toward the active footstep cue. If no route is available, the mod repeats its direction and distance.
+- Auto-walk checks the game's Kalash reveal state and gets the player close to the cue before announcing arrival.
+- Animated subtitles speak as complete lines after the text settles. Prompts and gameplay alerts keep their usual timing.
+
+## 2.0.3
+
+- Auto-walk recalculates the route when the selected pickup moves while the player is on the way.
+- Auto-walk checks the game's offering-circle trigger before announcing arrival. Offering circles have distinct names under Ritual and Puzzles.
+
+The continuous background run entered the Haveli and placed the salt bowl and prayer plate. A later chase interrupted the route to the key book. Route recovery after some respawns, access to the statue clues, and the ending still need verification.
+
+## 2.0.2
+
+- Enter can recover a stale interaction lock after the player has settled inside a hiding spot and use the game's normal exit. K still reports Kamla's location while hidden.
+- A newly detected auto-walk obstruction can be announced and focused even if a previous warning just played.
+
 ## 2.0.1
 
 - F5 and automatic local refresh preserve the selected destination while it still exists in the scene. Delete can retry it after it leaves the local list.

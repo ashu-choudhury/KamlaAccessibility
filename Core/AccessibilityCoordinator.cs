@@ -51,6 +51,7 @@ namespace KamlaAccessibility.Core
 
                 // 2. Global Hotkeys
                 HandleGlobalHotkeys();
+                SubtitleReader.Update();
 
                 // 3. UI Navigation (Menus, Pause, Settings)
                 if (!_puzzles.IsModalActive && !_interactionManager.IsMenuActive) _uiController.Update();
@@ -127,6 +128,7 @@ namespace KamlaAccessibility.Core
             // Left or Right Control: Silence Speech
             if (Input.GetKeyDown(KeyCode.LeftControl) || Input.GetKeyDown(KeyCode.RightControl))
             {
+                SubtitleReader.ClearPendingDialogue();
                 PrismSpeechProvider.Stop();
             }
 
@@ -185,7 +187,8 @@ namespace KamlaAccessibility.Core
             if (player == null || !player.isActiveAndEnabled || !Application.isFocused ||
                 Time.timeScale <= 0f || player.IsKilling || player.isPlayingVid || player.IsGettingOut || player.IsHiding)
             {
-                if (_hotspotManager.IsAutoWalking) _hotspotManager.StopAutoWalk();
+                if (player != null && player.IsHiding) _hotspotManager.OnHidingEntered();
+                else if (_hotspotManager.IsAutoWalking) _hotspotManager.StopAutoWalk();
                 if (_interactionManager.IsMenuActive) _interactionManager.CloseMenu();
                 _interactionDescriber.UpdateTarget(null);
                 _beacons.Stop();
@@ -269,7 +272,7 @@ namespace KamlaAccessibility.Core
                            "Up and Down browse the action menu. At a suitcase, type the digits with the number keys or number pad, then press Enter. " +
                          "F3 toggles subtitle and automatic crosshair reading. " +
                            "L reports lives remaining. K reports Kamla's location. " +
-                         (ModConfig.AutomaticHiding ? "Automatic hiding is on when Kamla chases you. Move manually or press Delete to cancel. " : "Automatic hiding is off. ") +
+                         (ModConfig.AutomaticHiding ? "Automatic hiding is on when Kamla is close or chasing. Move manually or press Delete to cancel. " : "Automatic hiding is off. ") +
                          "F10 to minimize graphics. " +
                          "Keypad 0 or Alt F for nearby radar. " +
                          "Keypad 8 or Alt C for compass. " +

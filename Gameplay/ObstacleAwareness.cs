@@ -37,7 +37,9 @@ namespace KamlaAccessibility.Gameplay
             bool unsafeGround = hit == null && player.Controller.isGrounded &&
                 !NavigationHelper.CanTakeStep(player, direction);
             if (hit == null && !unsafeGround) { ResetFocus(); return; }
-            if ((hit == _lastCollider && unsafeGround == _warnedAboutGround) || now < _nextWarning) return;
+            if (hit == _lastCollider && unsafeGround == _warnedAboutGround) return;
+            // A failed route supplies its direction only once. Keep its obstacle available to Enter.
+            if (blockedRoute.sqrMagnitude < 0.01f && now < _nextWarning) return;
 
             _lastCollider = hit;
             _warnedAboutGround = unsafeGround;
