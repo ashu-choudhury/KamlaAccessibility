@@ -58,7 +58,7 @@ namespace KamlaAccessibility.Core
                 if (Application.isFocused) _puzzles.AnnounceSuitcaseExit();
 
                 // 4. Gameplay: Hotspots, Auto-walk, Interaction, and Crosshair Look
-                UpdateGameplay();
+                if (!_uiController.OptionsActive) UpdateGameplay();
             }
             catch (Exception ex)
             {
@@ -85,6 +85,7 @@ namespace KamlaAccessibility.Core
         private void OnSceneChanged(string sceneName)
         {
             _hotspotManager.ResetScene();
+            _uiController.ResetOptions();
             _lastCover = null;
             _interactionManager.CloseMenu();
             _interactionDescriber.UpdateTarget(null);
@@ -135,11 +136,12 @@ namespace KamlaAccessibility.Core
                 PrismSpeechProvider.RepeatLast();
             }
 
-            // H: Health & Player Status
-            if (Input.GetKeyDown(KeyCode.H) && !Input.GetKey(KeyCode.LeftAlt) && !Input.GetKey(KeyCode.RightAlt))
+            if (Application.isFocused && (Input.GetKeyDown(KeyCode.L) || Input.GetKeyDown(KeyCode.K)) &&
+                !Input.GetKey(KeyCode.LeftAlt) && !Input.GetKey(KeyCode.RightAlt))
             {
                 var player = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
-                StatusReporter.ReportStatus(player);
+                if (Input.GetKeyDown(KeyCode.L)) StatusReporter.ReportLives(player);
+                else StatusReporter.ReportKamlaLocation(player);
             }
 
             // Keypad 0 or Alt + F: Scan Nearby Radar
@@ -175,6 +177,11 @@ namespace KamlaAccessibility.Core
         {
             var player = UnityEngine.Object.FindObjectOfType<PlayerMovement>();
             if (player != null && player.IsHiding && player.TpScriptRef != null) _lastCover = player.TpScriptRef;
+            if (player != null && player.IsHiding && !player.IsGettingOut && !player.IsKilling &&
+                Time.timeScale > 0f && Application.isFocused &&
+                (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)) &&
+                !HidingController.TryLeave(player))
+                PrismSpeechProvider.Speak("You are still in cover. Try again when the area is clear.", true);
             if (player == null || !player.isActiveAndEnabled || !Application.isFocused ||
                 Time.timeScale <= 0f || player.IsKilling || player.isPlayingVid || player.IsGettingOut || player.IsHiding)
             {
@@ -192,6 +199,9 @@ namespace KamlaAccessibility.Core
                 var cover = _lastCover;
                 _lastCover = null;
                 HidingController.ClearObstructedExit(player, cover);
+                var target = _hotspotManager.Selection;
+                PrismSpeechProvider.Speak(target != null && target.GameObject != null && target.GameObject.activeInHierarchy
+                    ? $"Out of cover. Press Delete to walk to {target.CleanName}." : "Out of cover.", true);
             }
 
             if (_puzzles.UpdateSuitcase(player) || _puzzles.UpdateRitual(player))
@@ -223,7 +233,7 @@ namespace KamlaAccessibility.Core
             }
 
             _interactionManager.Update(player, _puzzles, _obstacles.Focus != null
-                ? _obstacles.Focus : _hotspotManager.Selection?.GameObject);
+                ? _obstacles.Focus : _hotspotManager.Selection?.GameObject, _hotspotManager.ArrivedTarget);
             if (ModConfig.EnableSubtitles && _obstacles.Focus == null && !_interactionManager.IsMenuActive && !_puzzles.IsModalActive)
                 UpdateCrosshairLook();
             else
@@ -252,12 +262,13 @@ namespace KamlaAccessibility.Core
             string msg = $"Kamla Accessibility Mod Active. Speech backend: {backend}. " +
                          "Hotspot Navigation: Home and End to change category. " +
                          "Page Up and Page Down to cycle objects. " +
+                           "F5 refreshes nearby objects and repeats active footstep directions. " +
                          "Hotspots announce distance and clock direction. Kamla has a directional warning sound. " +
                          "Delete key to auto-walk to selected object. " +
                          "Enter key to activate or interact. " +
-                           "Up and Down browse the action menu. At a suitcase, Left and Right choose a wheel, Up and Down turn it, and Enter confirms the digit. " +
+                           "Up and Down browse the action menu. At a suitcase, type the digits with the number keys or number pad, then press Enter. " +
                          "F3 toggles subtitle and automatic crosshair reading. " +
-                         "H to check health and status. " +
+                           "L reports lives remaining. K reports Kamla's location. " +
                          (ModConfig.AutomaticHiding ? "Automatic hiding is on when Kamla chases you. Move manually or press Delete to cancel. " : "Automatic hiding is off. ") +
                          "F10 to minimize graphics. " +
                          "Keypad 0 or Alt F for nearby radar. " +

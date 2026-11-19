@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Il2Cpp;
+using KamlaAccessibility.Core;
 using KamlaAccessibility.Speech;
 using KamlaAccessibility.Audio;
 
@@ -33,7 +34,7 @@ namespace KamlaAccessibility.Gameplay
 
         public bool IsMenuActive => _isMenuActive;
 
-        internal void Update(PlayerMovement player, PuzzleAccessibility puzzles, GameObject focusedObject)
+        internal void Update(PlayerMovement player, PuzzleAccessibility puzzles, GameObject focusedObject, GameObject arrivedTarget)
         {
             // If the numbered menu is active, listen for 1-9 or Escape
             if (_isMenuActive)
@@ -45,7 +46,7 @@ namespace KamlaAccessibility.Gameplay
             // Enter key triggers interaction
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
             {
-                TriggerInteraction(player, puzzles, focusedObject);
+                TriggerInteraction(player, puzzles, arrivedTarget != null ? arrivedTarget : focusedObject);
             }
         }
 
@@ -75,8 +76,12 @@ namespace KamlaAccessibility.Gameplay
                     {
                         bool pickedUp = TryPickUp(player, item);
                         AudioCueGenerator.PlayNavSelect();
-                        PrismSpeechProvider.Speak(pickedUp ? $"Picked up {itemName}." :
-                            $"Could not pick up {itemName}. Move closer or check what you are carrying.", true);
+                        string feedback = pickedUp ? $"Picked up {itemName}." :
+                            player.enemyRef != null && player.enemyRef.IsChasing
+                                ? $"Kamla is chasing you. Get to safety before picking up {itemName}." :
+                            player.IsHavingItem ? $"You are already carrying an item. Put it down before picking up {itemName}." :
+                            $"Could not pick up {itemName} from here.";
+                        PrismSpeechProvider.Speak(feedback, true);
                     }, item.gameObject));
                 }
             }
@@ -252,6 +257,13 @@ namespace KamlaAccessibility.Gameplay
             options.RemoveAll(option => !PuzzleAccessibility.CanReach(player, option.Target, 3.8f));
             if (focusedObject != null)
             {
+                if (AccessibilityCoordinator.Instance?.Hotspots.ArrivedTarget == focusedObject)
+                {
+                    var selectedAction = options.Find(option => option.Target == focusedObject);
+                    if (selectedAction != null) selectedAction.Action.Invoke();
+                    else PrismSpeechProvider.Speak("The selected object has no available action from here.", true);
+                    return;
+                }
                 int focusedIndex = options.FindIndex(option => option.Target == focusedObject ||
                     focusedObject.transform.IsChildOf(option.Target.transform) ||
                     option.Target.transform.IsChildOf(focusedObject.transform));

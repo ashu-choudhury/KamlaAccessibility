@@ -10,7 +10,7 @@ namespace KamlaAccessibility.Core
 {
     public class KamlaAccessibilityMod : MelonMod
     {
-        internal const string Version = "1.0.6";
+        internal const string Version = "2.0.1";
 
         public override void OnInitializeMelon()
         {

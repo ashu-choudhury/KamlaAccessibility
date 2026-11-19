@@ -60,16 +60,9 @@ namespace KamlaAccessibility.Gameplay
             }
 
             string obstruction = unsafeGround ? "No clear footing ahead" : Describe(hit);
-            Vector3 right = NavigationHelper.Flat(player.transform.right);
-            bool leftOpen = NavigationHelper.CanTakeStep(player, -right);
-            bool rightOpen = NavigationHelper.CanTakeStep(player, right);
-            string detour = leftOpen && rightOpen ? " There is space to your left and right."
-                : leftOpen ? " Try a step to your left."
-                : rightOpen ? " Try a step to your right."
-                : " Neither side has a clear step.";
             string action = interactable != null || (Focus != null && Focus.GetComponent<ItemDetectForWallSlide>() != null)
                 ? " Press Enter to check nearby actions." : "";
-            PrismSpeechProvider.Speak($"{obstruction}.{action}{detour}", true);
+            PrismSpeechProvider.Speak($"{obstruction}.{action}", true);
         }
 
         private static string Describe(Collider hit)

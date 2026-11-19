@@ -6,6 +6,14 @@ namespace KamlaAccessibility.Gameplay
 {
     public static class HidingController
     {
+        internal static bool TryLeave(PlayerMovement player)
+        {
+            var cover = player.TpScriptRef;
+            if (cover == null || !player.IsHiding || player.IsGettingOut || !player.CanInteract) return false;
+            PuzzleAccessibility.WithInteract(cover.isHidingTrigger, cover);
+            return player.IsGettingOut || !player.IsHiding;
+        }
+
         public static bool TryFindRoute(PlayerMovement player, HashSet<int> excluded,
             out TPScript destination, out List<Vector3> waypoints)
         {

@@ -20,9 +20,20 @@ namespace KamlaAccessibility.UI
         private float _lastSliderVal = -999f;
         private GameObject _lastActiveCanvas = null;
         private float _menuCheckTimer = 0f;
+        private readonly OptionsNavigation _options = new();
+        internal bool OptionsActive { get; private set; }
 
         public void Update()
         {
+            bool wasInOptions = OptionsActive;
+            OptionsActive = _options.Update();
+            if (OptionsActive) return;
+            if (wasInOptions)
+            {
+                _lastActiveCanvas = null;
+                _lastSelected = null;
+                _menuCheckTimer = 0.2f;
+            }
             // Escape key handling for Pause Menu
             if (Input.GetKeyDown(KeyCode.Escape))
             {
@@ -98,6 +109,12 @@ namespace KamlaAccessibility.UI
                     }
                 }
             }
+        }
+
+        internal void ResetOptions()
+        {
+            _options.Reset();
+            OptionsActive = false;
         }
 
         private void OnEscapePressed()

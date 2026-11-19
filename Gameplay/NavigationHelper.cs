@@ -48,7 +48,8 @@ namespace KamlaAccessibility.Gameplay
             return false;
         }
 
-        public static bool TryFindPath(PlayerMovement player, HotspotItem item, out List<Vector3> waypoints)
+        public static bool TryFindPath(PlayerMovement player, HotspotItem item, out List<Vector3> waypoints,
+            Vector3? failedApproach = null, bool preferPhysicalRoute = false)
         {
             waypoints = null;
             if (player.Controller == null || !player.Controller.enabled) return false;
@@ -59,13 +60,11 @@ namespace KamlaAccessibility.Gameplay
             Vector3 target = item.Position;
             var collider = item.InteractionCollider;
             var goals = new List<Vector3>();
-            Func<Vector3, bool> canReadFrom = null;
-            if (item.IsClue)
-            {
-                float eyeHeight = (player.mainCam != null ? player.mainCam.transform.position.y : player.transform.position.y) - feet.y;
-                canReadFrom = position => Vector3.Distance(position + Vector3.up * eyeHeight, target) <= 2.6f &&
-                    PuzzleAccessibility.CanSeeClueFrom(item.GameObject, position + Vector3.up * eyeHeight);
-            }
+            Vector3 bodyOffset = player.transform.position - feet;
+            Vector3 eyeOffset = (player.mainCam != null ? player.mainCam.transform.position : player.transform.position) - feet;
+            Func<Vector3, bool> canReadFrom = position =>
+                (!failedApproach.HasValue || Flat(position - failedApproach.Value).sqrMagnitude > 0.35f * 0.35f) &&
+                IsInteractionApproach(player, item, position + bodyOffset, position + eyeOffset);
             Vector3 towardPlayer = Flat(feet - target).normalized;
             if (towardPlayer.sqrMagnitude < 0.01f) towardPlayer = -player.transform.forward;
             var approachAngles = item.IsClue ? new[] { 0, -45, 45, -90, 90, -135, 135, 180 } :
@@ -78,52 +77,193 @@ namespace KamlaAccessibility.Gameplay
                     var bounds = collider.bounds;
                     float radius = bounds.extents.magnitude + 1f;
                     Vector3 edge = bounds.ClosestPoint(target + side * radius);
+                    goals.Add(edge + side * 0.42f);
                     goals.Add(edge + side * 0.65f);
                 }
                 else
                 {
                     if (collider != null && collider.isTrigger) goals.Add(target + side * 0.25f);
-                    goals.Add(target + side * 0.7f);
+                    goals.Add(target + side * 0.5f);
+                    goals.Add(target + side * 0.85f);
                     goals.Add(target + side * 1.35f);
                     if (item.IsClue) goals.Add(target + side * 2.1f);
                 }
             }
             if (collider == null || collider.isTrigger) goals.Add(target);
+            bool haveli = item.GameObject.scene.name == "Haveli";
+            float retryRange = haveli ? 18f : 6f;
+            bool retryNearTarget = preferPhysicalRoute ||
+                (failedApproach.HasValue && Flat(target - feet).sqrMagnitude < retryRange * retryRange);
+            bool allowOrdinaryDoors = haveli;
 
             foreach (var goal in goals)
             {
-                if (CanWalkStraight(player, feet, goal, out Vector3 end) && IsSameLevel(end, target) &&
-                    (canReadFrom == null || canReadFrom(end)))
+                if (CanWalkStraight(player, feet, goal, out Vector3 end) && IsSameLevel(end, target) && canReadFrom(end))
                 {
                     waypoints = new List<Vector3> { end };
                     return true;
                 }
-                if (TryNavMeshPath(feet, goal, target, out waypoints) &&
-                    (canReadFrom == null || canReadFrom(waypoints[waypoints.Count - 1]))) return true;
+                if (!retryNearTarget && TryNavMeshPath(feet, goal, target, out waypoints) &&
+                    canReadFrom(waypoints[waypoints.Count - 1])) return true;
             }
 
-            if (TryHaveliStairs(player, feet, target, goals, out waypoints, canReadFrom)) return true;
+            if (!retryNearTarget && TryHaveliStairs(player, feet, target, goals, out waypoints, canReadFrom)) return true;
 
             // Narrow gaps and broad slopes can give different results on different sample grids.
-            if (TryLocalDetour(player, feet, target, goals, 0.9f, 2200, true, out waypoints, acceptEnd: canReadFrom) ||
-                TryLocalDetour(player, feet, target, goals, 1.25f, 750, false, out waypoints, acceptEnd: canReadFrom))
+            if (TryLocalDetour(player, feet, target, goals, 0.9f, 2200, true, out waypoints, allowOrdinaryDoors, canReadFrom) ||
+                TryLocalDetour(player, feet, target, goals, 1.25f, 750, false, out waypoints, allowOrdinaryDoors, canReadFrom))
                 return true;
 
             // A player standing close to a fixture may be between the regular grid's sample points.
-            // Test a short, collision-checked first step, then search from that shifted position.
-            Vector3 forward = -towardPlayer;
-            if (!CanWalkStraight(player, feet, feet + forward * 0.55f, out Vector3 seed) ||
-                !TryLocalDetour(player, seed, target, goals, 0.9f, 1800, true, out waypoints, acceptEnd: canReadFrom))
-                return false;
+            // A blocked forward step is a reason to try a different starting point.
+            Vector3 sideStep = Vector3.Cross(Vector3.up, towardPlayer);
+            foreach (var direction in new[] { -towardPlayer, sideStep, -sideStep, towardPlayer })
+            {
+                if (!CanWalkStraight(player, feet, feet + direction * 0.55f, out Vector3 seed) ||
+                    !TryLocalDetour(player, seed, target, goals, 0.75f, 950, true, out waypoints,
+                        allowOrdinaryDoors, canReadFrom)) continue;
+                waypoints.Insert(0, seed);
+                return true;
+            }
+            return haveli && TryReconnectToNavMesh(player, feet, target, goals, canReadFrom, out waypoints);
+        }
 
-            waypoints.Insert(0, seed);
+        private static bool TryReconnectToNavMesh(PlayerMovement player, Vector3 feet, Vector3 target,
+            List<Vector3> goals, Func<Vector3, bool> acceptEnd, out List<Vector3> route)
+        {
+            route = null;
+            // Respawn and narrow furniture can leave the controller outside the baked walking area.
+            // Only reconnect along a segment the current character capsule can actually walk.
+            foreach (float distance in new[] { 0.8f, 1.5f, 2.4f, 3.8f, 5.6f, 8f })
+            {
+                for (int angle = 0; angle < 360; angle += 45)
+                {
+                    Vector3 direction = Quaternion.AngleAxis(angle, Vector3.up) * Vector3.forward;
+                    Vector3 probe = feet + direction * distance;
+                    if (!NavMesh.SamplePosition(probe, out var landing, 0.7f, NavMesh.AllAreas) ||
+                        Flat(landing.position - feet).sqrMagnitude < 0.5f * 0.5f ||
+                        Mathf.Abs(feet.y - landing.position.y) > 0.7f) continue;
+
+                    List<Vector3> approach = null;
+                    foreach (var goal in goals)
+                    {
+                        if (!TryNavMeshPath(landing.position, goal, target, out route) || !acceptEnd(route[route.Count - 1])) continue;
+                        if (approach == null)
+                        {
+                            if (CanWalkStraight(player, feet, landing.position, out var direct) &&
+                                Mathf.Abs(direct.y - landing.position.y) <= 0.35f)
+                                approach = new List<Vector3> { direct };
+                            else if (distance <= 2.4f ||
+                                !TryLocalDetour(player, feet, landing.position, new List<Vector3> { landing.position },
+                                    0.55f, 270, true, out approach, allowOrdinaryDoors: true,
+                                    acceptEnd: end => Mathf.Abs(end.y - landing.position.y) <= 0.35f))
+                                break;
+                        }
+
+                        Vector3 step = approach[approach.Count - 1];
+                        int first = route.FindIndex(point => Flat(point - step).sqrMagnitude > 0.3f * 0.3f);
+                        if (first >= 0)
+                        {
+                            Vector3 firstStep = step + Vector3.ClampMagnitude(Flat(route[first] - step), 0.7f);
+                            if (!CanWalkStraight(player, step, firstStep, out _, allowOrdinaryDoors: true)) continue;
+                        }
+                        route.InsertRange(0, approach);
+                        return true;
+                    }
+                }
+            }
+            route = null;
+            return false;
+        }
+
+        internal static bool IsAtInteraction(PlayerMovement player, HotspotItem item)
+        {
+            var target = item.GameObject;
+            if (target.GetComponent<ColliderForCryingEvent>() is { } encounter && encounter != null)
+                return encounter.cryingKamlaMan != null && encounter.cryingKamlaMan.ActivateEvent;
+            if (target.GetComponent<CourtYardMechanic>() is { } altar && altar != null)
+                return altar.isNear && PuzzleAccessibility.CanReach(player, target, 3f);
+            if (target.GetComponent<FootstepSmudgeStick>() is { } trail && trail != null)
+                return trail.isActive && trail.isNear && PuzzleAccessibility.CanReach(player, target, 3f);
+            Vector3 position = player.transform.position;
+            Vector3 eyes = player.mainCam != null ? player.mainCam.transform.position : position;
+            if (!IsInteractionApproach(player, item, position, eyes)) return false;
+            if (target.GetComponent<OuterAreaDoor>() is { } entrance && entrance != null) return entrance.isNear;
+            if (target.GetComponent<MainGateOuterArea>() is { } gate && gate != null)
+                return gate.isNear;
+            if (target.GetComponent<DoorScriptCode>() is { } door && door != null) return door.playerEnter;
+            if (target.GetComponent<Book>() is { } book && book != null) return book.IsTouchingPlayer;
+            if (target.GetComponent<Handpump>() is { } pump && pump != null) return pump.isNear;
+            if (target.GetComponent<GlassShelf>() is { } cabinet && cabinet != null) return cabinet.isTouchingPlayer;
+            if (target.GetComponent<GaneshMurtiManager>() is { } ganesh && ganesh != null) return ganesh.isNear;
+            if (target.GetComponent<ItemDetectForWallSlide>() is { } wall && wall != null) return wall.isNear;
+            if (target.GetComponent<MetalLockedDoor>() is { } metalDoor && metalDoor != null) return metalDoor.isTouchingPlayer;
+            if (target.GetComponent<TPScript>() is { } cover && cover != null) return cover.IsNear;
             return true;
+        }
+
+        private static bool IsInteractionApproach(PlayerMovement player, HotspotItem item, Vector3 position, Vector3 eyes)
+        {
+            if (item.IsClue) return PuzzleAccessibility.CanReachFrom(player, item.GameObject, position, eyes, 2.75f);
+            if (item.GameObject.GetComponent<ColliderForCryingEvent>() != null && item.InteractionCollider != null)
+                return item.InteractionCollider.bounds.Contains(position);
+            if (item.ApproachPoint != null && item.GameObject.GetComponent<FootstepSmudgeStick>() != null)
+                return Flat(item.Position - position).sqrMagnitude <= 0.7f * 0.7f &&
+                       Mathf.Abs(item.Position.y - position.y) < 2.1f;
+            Vector3 point = item.InteractionCollider != null && !item.InteractionCollider.isTrigger
+                ? item.InteractionCollider.bounds.ClosestPoint(position) : item.Position;
+            float distance = Flat(point - position).magnitude;
+            float limit = item.GameObject.GetComponent<ItemPicker>() != null || item.GameObject.GetComponent<Key>() != null
+                ? 1.05f : 1.25f;
+            return distance <= limit && PuzzleAccessibility.CanReachFrom(player, item.GameObject, position, eyes, 2.75f);
         }
 
         internal static Vector3 GetFeet(CharacterController controller)
         {
             var bounds = controller.bounds;
             return new Vector3(bounds.center.x, bounds.min.y, bounds.center.z);
+        }
+
+        internal static bool TryFindCoverDetour(PlayerMovement player, Vector3 entrance, out List<Vector3> route)
+        {
+            Vector3 feet = GetFeet(player.Controller);
+            if (CanWalkStraight(player, feet, entrance, out var end) && IsSameLevel(end, entrance))
+            {
+                route = new List<Vector3> { end };
+                return true;
+            }
+            return TryLocalDetour(player, feet, entrance, new List<Vector3> { entrance }, 0.55f, 550,
+                true, out route, allowOrdinaryDoors: true);
+        }
+
+        internal static bool TryBypassRouteObstruction(PlayerMovement player, Vector3 direction,
+            List<Vector3> route, int nextWaypoint, out List<Vector3> bypass)
+        {
+            bypass = null;
+            var obstruction = FindBlockingCollider(player, direction, 1.2f);
+            if (obstruction == null) return false;
+
+            Vector3 feet = GetFeet(player.Controller);
+            for (int i = nextWaypoint; i < route.Count; i++)
+            {
+                Vector3 rejoin = route[i];
+                Vector3 offset = Flat(rejoin - feet);
+                if (Mathf.Abs(rejoin.y - feet.y) > 0.8f) break;
+                bool rejoinOnSegment = i == nextWaypoint && offset.sqrMagnitude > 16f;
+                if (rejoinOnSegment)
+                {
+                    rejoin = Vector3.Lerp(feet, rejoin, 3f / offset.magnitude);
+                    offset = Flat(rejoin - feet);
+                }
+                if (offset.sqrMagnitude > 16f) break;
+                if (offset.sqrMagnitude < 0.65f * 0.65f || Vector3.Dot(offset, direction) <= 0f) continue;
+                if (!TryLocalDetour(player, feet, rejoin, new List<Vector3> { rejoin }, 0.38f, 360, true,
+                        out bypass, acceptEnd: end => Mathf.Abs(end.y - rejoin.y) <= 0.45f)) continue;
+                for (int j = rejoinOnSegment ? i : i + 1; j < route.Count; j++) bypass.Add(route[j]);
+                MelonLoader.MelonLogger.Msg($"[Navigation] Found a local detour around {obstruction.name}.");
+                return true;
+            }
+            return false;
         }
 
         private static bool IsSameLevel(Vector3 floor, Vector3 target) =>
@@ -364,7 +504,7 @@ namespace KamlaAccessibility.Gameplay
                 if (horizontal.sqrMagnitude < 0.0001f) continue;
 
                 float along = Vector3.Dot(Flat(door - start), horizontal) / horizontal.sqrMagnitude;
-                if (along <= 0f || along >= 1f) continue;
+                if (along < 0f || along > 1f || (along == 1f && i == waypoints.Count - 1)) continue;
                 Vector3 closest = start + delta * along;
                 if (Mathf.Abs(door.y - closest.y) <= 1.6f && Flat(door - closest).sqrMagnitude < 0.9f * 0.9f)
                     return true;
@@ -375,6 +515,12 @@ namespace KamlaAccessibility.Gameplay
         public static bool TryOpenBlockingDoor(PlayerMovement player, Vector3 direction)
         {
             var nearest = FindBlockingCollider(player, direction, 1.6f);
+            var gate = nearest != null ? nearest.GetComponentInParent<MainGateOuterArea>() : null;
+            if (gate != null && gate.isNear && !gate.isOpen)
+            {
+                PuzzleAccessibility.WithInteract(gate.gateOpen);
+                return gate.isOpen;
+            }
             var scriptDoor = nearest != null ? nearest.GetComponentInParent<DoorScriptCode>() : null;
             if (scriptDoor == null)
                 scriptDoor = FindDoorInStep(player, direction, nearest);
@@ -467,12 +613,19 @@ namespace KamlaAccessibility.Gameplay
                 {
                     continue;
                 }
-                if (allowOrdinaryDoors && (collider.GetComponentInParent<DoorScriptCode>() != null ||
-                    collider.GetComponentInParent<Door>() != null)) continue;
+                if (allowOrdinaryDoors && IsClosedOrdinaryDoor(collider)) continue;
                 closest = hit.distance;
                 nearest = collider;
             }
             return nearest;
+        }
+
+        private static bool IsClosedOrdinaryDoor(Collider collider)
+        {
+            var scriptDoor = collider.GetComponentInParent<DoorScriptCode>();
+            if (scriptDoor != null) return scriptDoor.isActiveAndEnabled && !scriptDoor.open && !scriptDoor.isDoorOpening;
+            var door = collider.GetComponentInParent<Door>();
+            return door != null && door.isActiveAndEnabled && !door.isOpen && !door.isOpening;
         }
 
         public static bool CanTakeStep(PlayerMovement player, Vector3 direction)
