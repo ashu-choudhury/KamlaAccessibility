@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Il2Cpp;
+using KamlaAccessibility.Core;
 using KamlaAccessibility.Speech;
 using KamlaAccessibility.Audio;
 
@@ -33,7 +34,7 @@ namespace KamlaAccessibility.Gameplay
 
         public bool IsMenuActive => _isMenuActive;
 
-        internal void Update(PlayerMovement player, PuzzleAccessibility puzzles, GameObject focusedObject)
+        internal void Update(PlayerMovement player, PuzzleAccessibility puzzles, GameObject focusedObject, GameObject arrivedTarget)
         {
             // If the numbered menu is active, listen for 1-9 or Escape
             if (_isMenuActive)
@@ -45,7 +46,7 @@ namespace KamlaAccessibility.Gameplay
             // Enter key triggers interaction
             if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
             {
-                TriggerInteraction(player, puzzles, focusedObject);
+                TriggerInteraction(player, puzzles, arrivedTarget != null ? arrivedTarget : focusedObject);
             }
         }
 
@@ -252,6 +253,13 @@ namespace KamlaAccessibility.Gameplay
             options.RemoveAll(option => !PuzzleAccessibility.CanReach(player, option.Target, 3.8f));
             if (focusedObject != null)
             {
+                if (AccessibilityCoordinator.Instance?.Hotspots.ArrivedTarget == focusedObject)
+                {
+                    var selectedAction = options.Find(option => option.Target == focusedObject);
+                    if (selectedAction != null) selectedAction.Action.Invoke();
+                    else PrismSpeechProvider.Speak("The selected object has no available action from here.", true);
+                    return;
+                }
                 int focusedIndex = options.FindIndex(option => option.Target == focusedObject ||
                     focusedObject.transform.IsChildOf(option.Target.transform) ||
                     option.Target.transform.IsChildOf(focusedObject.transform));

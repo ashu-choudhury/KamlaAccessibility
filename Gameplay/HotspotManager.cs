@@ -208,6 +208,12 @@ namespace KamlaAccessibility.Gameplay
         private TPScript _hideDestination;
         private Vector2 _routeInput;
         private Vector3 _blockedDirection;
+        private Vector3? _failedApproach;
+        private GameObject _arrivedTarget;
+        private bool _passingGate;
+        private float _gateWaitUntil;
+
+        internal GameObject ArrivedTarget => _arrivedTarget;
 
         public bool IsAutoWalking => _targetItem != null;
         public HotspotItem Selection => _selectedItem;
@@ -238,6 +244,7 @@ namespace KamlaAccessibility.Gameplay
 
             var input = PlayerInputManager.Instance;
             bool manualMove = (input != null && input.MoveInput.sqrMagnitude > 0.04f) || Input.GetKeyDown(KeyCode.Space);
+            if (manualMove) _arrivedTarget = null;
             var enemy = player.enemyRef;
             bool chasing = enemy != null && enemy.isActiveAndEnabled && enemy.IsChasing;
             if (!chasing && _hideDestination == null)
@@ -281,6 +288,7 @@ namespace KamlaAccessibility.Gameplay
         {
             _currentCategoryIndex = (_currentCategoryIndex + direction + Categories.Length) % Categories.Length;
             _selectedItem = null;
+            _arrivedTarget = null;
             HotspotCategory selectedCat = Categories[_currentCategoryIndex];
 
             ScanCategory(playerTransform, selectedCat);
@@ -327,12 +335,14 @@ namespace KamlaAccessibility.Gameplay
             string state = item.GetStateString();
 
             _selectedItem = item;
+            _arrivedTarget = null;
             AudioCueGenerator.PlayNavTick();
             PrismSpeechProvider.Speak($"{item.CleanName}, {dist:F1} meters at {clock} o'clock, {state}.", true);
         }
 
         private void StartAutoWalk(PlayerMovement player)
         {
+            _arrivedTarget = null;
             HotspotItem target = _selectedItem;
             if (target == null)
             {
@@ -343,6 +353,11 @@ namespace KamlaAccessibility.Gameplay
             {
                 _selectedItem = null;
                 PrismSpeechProvider.Speak("Selected object is no longer available.", true);
+                return;
+            }
+            if (target.Category != HotspotCategory.HidingSpots && NavigationHelper.IsAtInteraction(player, target))
+            {
+                ArriveAtTarget(player, target);
                 return;
             }
             if (!NavigationHelper.TryFindPath(player, target, out var route))
@@ -378,6 +393,9 @@ namespace KamlaAccessibility.Gameplay
             _stuckTimer = 0f;
             _hideEntryTimer = 0f;
             _retriedBlockedPath = false;
+            _failedApproach = null;
+            _arrivedTarget = null;
+            _passingGate = false;
             _routeInput = Vector2.zero;
             MelonLogger.Msg($"[Navigation] Started route to {target.CleanName}, {route.Count} waypoints.");
         }
@@ -395,9 +413,9 @@ namespace KamlaAccessibility.Gameplay
                 FailRoute("The target is no longer available.");
                 return;
             }
-            if (_targetItem.IsClue && PuzzleAccessibility.CanReach(player, _targetItem.GameObject, 2.75f))
+            if (!_passingGate && _hideDestination == null && NavigationHelper.IsAtInteraction(player, _targetItem))
             {
-                StopAutoWalk($"At {_targetItem.CleanName}. Press Enter to read it.");
+                ArriveAtTarget(player, _targetItem);
                 return;
             }
 
@@ -405,8 +423,7 @@ namespace KamlaAccessibility.Gameplay
             Vector3 position = player.transform.position;
             Vector3 feet = NavigationHelper.GetFeet(controller);
             _routeInput = Vector2.zero;
-            float finalTolerance = _targetItem.InteractionCollider != null && _targetItem.InteractionCollider.isTrigger
-                ? 0.13f : 0.24f;
+            const float finalTolerance = 0.12f;
 
             while (_currentWaypointIndex < _waypoints.Count)
             {
@@ -420,14 +437,15 @@ namespace KamlaAccessibility.Gameplay
             {
                 if (_hideDestination == null)
                 {
-                    string name = _targetItem.CleanName;
-                    Vector3 interactionPoint = _targetItem.InteractionCollider != null
-                        ? _targetItem.InteractionCollider.bounds.ClosestPoint(position) : _targetItem.Position;
-                    float distance = Vector3.Distance(position, interactionPoint);
-                    Vector3 face = NavigationHelper.Flat(_targetItem.Position - position);
-                    if (face.sqrMagnitude > 0.01f) player.transform.rotation = Quaternion.LookRotation(face);
-                    StopAutoWalk(distance <= 3f ? $"At {name}. Press Enter for nearby actions." :
-                        $"Reached the closest point on the route to {name}.");
+                    if (_passingGate) StopAutoWalk("Through the main gate.");
+                    else if (!_failedApproach.HasValue &&
+                            NavigationHelper.TryFindPath(player, _targetItem, out var approach, feet))
+                    {
+                        _failedApproach = feet;
+                        _waypoints = approach;
+                        _currentWaypointIndex = 0;
+                    }
+                    else StopAutoWalk($"Could not reach an interaction position for {_targetItem.CleanName}.");
                 }
                 else if (HidingController.TryEnter(player, _hideDestination))
                 {
@@ -442,6 +460,8 @@ namespace KamlaAccessibility.Gameplay
             }
 
             Vector3 direction = NavigationHelper.Flat(_waypoints[_currentWaypointIndex] - feet);
+            if (_passingGate && Time.unscaledTime <= _gateWaitUntil &&
+                NavigationHelper.FindBlockingCollider(player, direction, 0.65f) != null) return;
             if (direction.sqrMagnitude > 0.001f)
             {
                 player.transform.rotation = Quaternion.LookRotation(direction);
@@ -461,15 +481,15 @@ namespace KamlaAccessibility.Gameplay
                 return;
             }
 
-            if (!_retriedBlockedPath)
+            if (!_passingGate && !_retriedBlockedPath)
             {
-                _retriedBlockedPath = true;
                 if (direction.sqrMagnitude > 0.001f && NavigationHelper.TryOpenBlockingDoor(player, direction.normalized)) return;
+                _retriedBlockedPath = true;
 
                 List<Vector3> route;
                 bool found = _hideDestination != null
                     ? NavigationHelper.TryFindPath(player, _targetItem.Position, 0f, out route)
-                    : NavigationHelper.TryFindPath(player, _targetItem, out route);
+                    : NavigationHelper.TryFindPath(player, _targetItem, out route, _failedApproach ?? _waypoints[_waypoints.Count - 1]);
                 if (found)
                 {
                     _waypoints = route;
@@ -478,7 +498,27 @@ namespace KamlaAccessibility.Gameplay
                 }
             }
             _blockedDirection = direction;
-            FailRoute("The route is blocked.");
+            FailRoute($"The route is blocked before {_targetItem.CleanName}.");
+        }
+
+        private void ArriveAtTarget(PlayerMovement player, HotspotItem target)
+        {
+            Vector3 face = NavigationHelper.Flat(target.Position - player.transform.position);
+            if (face.sqrMagnitude > 0.01f) player.transform.rotation = Quaternion.LookRotation(face);
+            StopAutoWalk($"At {target.CleanName}. Press Enter to {(target.IsClue ? "read it" : "use it")}.");
+            _arrivedTarget = target.GameObject;
+        }
+
+        internal void WalkThroughGate(PlayerMovement player, MainGateOuterArea gate)
+        {
+            var target = new HotspotItem(gate.gameObject, "Main Haveli Gate", HotspotCategory.Doors);
+            Vector3 feet = NavigationHelper.GetFeet(player.Controller);
+            Vector3 direction = NavigationHelper.Flat(target.Position - feet);
+            if (direction.sqrMagnitude < 0.04f) direction = NavigationHelper.Flat(player.transform.forward);
+            Vector3 destination = feet + direction.normalized * (direction.magnitude + 0.8f);
+            BeginRoute(player, target, new List<Vector3> { destination });
+            _passingGate = true;
+            _gateWaitUntil = Time.unscaledTime + 3f;
         }
 
         private void FailRoute(string message)
@@ -495,6 +535,7 @@ namespace KamlaAccessibility.Gameplay
             _triedHidingSpots.Clear();
             _blockedDirection = Vector3.zero;
             _selectedItem = null;
+            _arrivedTarget = null;
             _currentItems.Clear();
         }
 
@@ -503,6 +544,7 @@ namespace KamlaAccessibility.Gameplay
             _targetItem = null;
             _routePlayer = null;
             _hideDestination = null;
+            _passingGate = false;
             _routeInput = Vector2.zero;
             _waypoints = null;
 

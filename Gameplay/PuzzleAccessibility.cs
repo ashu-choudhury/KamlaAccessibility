@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Il2Cpp;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
+using KamlaAccessibility.Core;
 using KamlaAccessibility.Speech;
 using UnityEngine;
 using UnityEngine.UI;
@@ -17,6 +18,8 @@ namespace KamlaAccessibility.Gameplay
         private Suitcase _suitcase;
         private int _wheel = -1;
         private int _number = -1;
+        private string _typedDigits = "";
+        private string _submittedDigits;
         private ItemInCourtyard _ritual;
         private Handpump _pump;
         private bool _holdingRitual;
@@ -43,7 +46,32 @@ namespace KamlaAccessibility.Gameplay
             int selected = Mathf.Clamp(_suitcase.selectedWheel, 0, wheels.Length - 1);
             if (Input.GetKeyDown(KeyCode.Escape))
             {
+                _typedDigits = "";
+                _submittedDigits = null;
                 WithInteract(_suitcase.suitcaseMode, _suitcase, back: true);
+                return true;
+            }
+            if (_submittedDigits != null)
+            {
+                DialSubmittedDigits(wheels);
+                return true;
+            }
+            for (int digit = 0; digit <= 9; digit++)
+            {
+                if (!Input.GetKeyDown(KeyCode.Alpha0 + digit) && !Input.GetKeyDown(KeyCode.Keypad0 + digit)) continue;
+                TypeSuitcaseDigit(digit, wheels.Length);
+                return true;
+            }
+            if (Input.GetKeyDown(KeyCode.Backspace) && _typedDigits.Length > 0)
+            {
+                _typedDigits = _typedDigits.Substring(0, _typedDigits.Length - 1);
+                Say(_typedDigits.Length == 0 ? "Combination cleared." : $"Digits, {string.Join(", ", _typedDigits.ToCharArray())}.");
+                return true;
+            }
+            if (_typedDigits.Length > 0)
+            {
+                if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+                    SubmitSuitcaseDigits(wheels.Length);
                 return true;
             }
 
@@ -65,10 +93,47 @@ namespace KamlaAccessibility.Gameplay
             {
                 _wheel = selected;
                 _number = wheel.numberShown;
-                string help = first ? "Suitcase. Left and Right choose a wheel. Up and Down turn it. Enter confirms the digit. Escape leaves. " : "";
+                string help = first ? "Suitcase. Type the combination using number keys or the number pad, then press Enter. Backspace corrects a digit. Left and Right choose a wheel. Up and Down turn it. Escape leaves. " : "";
                 Say($"{help}Wheel {selected + 1} of {wheels.Length}, {_number}.");
             }
             return true;
+        }
+
+        private void TypeSuitcaseDigit(int digit, int wheelCount)
+        {
+            if (_typedDigits.Length >= wheelCount) { Say("Combination ready. Press Enter or Backspace."); return; }
+            _typedDigits += (char)('0' + digit);
+            Say($"Digit {_typedDigits.Length}, {digit}." + (_typedDigits.Length == wheelCount ? " Press Enter to dial." : ""));
+        }
+
+        private void SubmitSuitcaseDigits(int wheelCount)
+        {
+            if (_typedDigits.Length != wheelCount) { Say($"Enter all {wheelCount} digits."); return; }
+            _submittedDigits = _typedDigits;
+            _typedDigits = "";
+            Say($"Dialing {string.Join(", ", _submittedDigits.ToCharArray())}.");
+        }
+
+        internal bool IsDialing(Suitcase suitcase) => _submittedDigits != null && _suitcase == suitcase;
+
+        private void DialSubmittedDigits(Il2CppReferenceArray<GameObject> wheels)
+        {
+            for (int i = 0; i < wheels.Length; i++)
+            {
+                var wheel = wheels[i] != null ? wheels[i].GetComponent<RotateWheel>() : null;
+                if (wheel == null) { _submittedDigits = null; Say("A suitcase dial is unavailable."); return; }
+                if (!wheel.coroutineAllowed) return;
+                int steps = (_submittedDigits[i] - '0' - wheel.numberShown + 10) % 10;
+                if (steps == 0) continue;
+                _suitcase.selectedWheel = i;
+                _wheel = i;
+                if (steps <= 5) wheel.keyPressUp();
+                else wheel.keyPressDown();
+                return;
+            }
+            _submittedDigits = null;
+            _suitcase.checkResults();
+            if (!_suitcase.unlocked) Say("The suitcase is still locked. Enter another combination.");
         }
 
         public void AnnounceSuitcaseExit()
@@ -84,6 +149,8 @@ namespace KamlaAccessibility.Gameplay
             else Say("Left the suitcase.");
             _wheel = -1;
             _number = -1;
+            _typedDigits = "";
+            _submittedDigits = null;
         }
 
         private void ConfirmSuitcaseWheel(RotateWheel wheel, int selected, Il2CppReferenceArray<GameObject> wheels)
@@ -383,16 +450,20 @@ namespace KamlaAccessibility.Gameplay
                 }
                 WithInteract(court.Update);
             });
-            AddNearby<MainGateOuterArea>(player, options, "Open the main gate", gate =>
+            AddNearby<MainGateOuterArea>(player, options, gate => gate.isOpen ? "Walk through the main gate" : "Open the main gate", gate =>
             {
-                if (gate.isOpen) { Say("The main gate is already open."); return; }
-                if (!gate.isNear && !CanReach(player, gate.gameObject, 0.75f))
+                if (!gate.isNear)
                 {
                     Say("Move closer to the main gate.");
                     return;
                 }
-                WithInteract(gate.gateOpen);
-                Say(gate.isOpen ? "The main gate is open." : "The main gate did not open.");
+                if (!gate.isOpen) WithInteract(gate.gateOpen);
+                if (gate.isOpen)
+                {
+                    AccessibilityCoordinator.Instance?.Hotspots.WalkThroughGate(player, gate);
+                    Say("Walking through the main gate.");
+                }
+                else Say("The main gate did not open.");
             });
             AddNearby<OuterAreaDoor>(player, options, "Enter the Haveli", door =>
             {
@@ -438,12 +509,18 @@ namespace KamlaAccessibility.Gameplay
 
         internal static bool CanReach(PlayerMovement player, GameObject target, float range)
         {
+            Vector3 position = player.transform.position;
+            return CanReachFrom(player, target, position,
+                player.mainCam != null ? player.mainCam.transform.position : position, range);
+        }
+
+        internal static bool CanReachFrom(PlayerMovement player, GameObject target, Vector3 position, Vector3 eyes, float range)
+        {
             if (target == null || !target.activeInHierarchy) return false;
             var collider = HotspotItem.FindInteractionCollider(target);
             Vector3 center = collider != null ? collider.bounds.center : target.transform.position;
-            Vector3 near = collider != null ? collider.bounds.ClosestPoint(player.transform.position) : center;
-            if (Vector3.Distance(player.transform.position, near) > range) return false;
-            Vector3 eyes = player.mainCam != null ? player.mainCam.transform.position : player.transform.position;
+            Vector3 near = collider != null ? collider.bounds.ClosestPoint(eyes) : center;
+            if (Vector3.Distance(position, near) > range) return false;
             var projector = target.GetComponent<DecalProjector>();
             if (projector != null) return CanSeeProjectedClue(projector, eyes);
             if (!Physics.Linecast(eyes, near, out var hit, Physics.DefaultRaycastLayers,
@@ -452,14 +529,6 @@ namespace KamlaAccessibility.Gameplay
             return hit.collider.transform.IsChildOf(target.transform) ||
                 target.transform.IsChildOf(hit.collider.transform) ||
                 hit.collider.transform.IsChildOf(player.transform);
-        }
-
-        internal static bool CanSeeClueFrom(GameObject clue, Vector3 eyes)
-        {
-            var projector = clue.GetComponent<DecalProjector>();
-            return projector != null
-                ? CanSeeProjectedClue(projector, eyes)
-                : !Physics.Linecast(eyes, clue.transform.position, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
         }
 
         private static bool CanSeeProjectedClue(DecalProjector projector, Vector3 eyes)
@@ -548,6 +617,8 @@ namespace KamlaAccessibility.Gameplay
         {
             StopRitual();
             _suitcase = null;
+            _typedDigits = "";
+            _submittedDigits = null;
             _wheel = -1;
             _number = -1;
             _trail = null;
