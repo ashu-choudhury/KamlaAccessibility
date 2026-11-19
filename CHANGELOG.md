@@ -1,5 +1,11 @@
 # Kamla Accessibility Mod changelog
 
+## 2.0.5
+
+- Auto-hide starts when Kamla is close and unobstructed on the same floor, or when she starts chasing. The player uses normal sprinting and enters as soon as the game allows it.
+- If a route to cover is blocked, auto-hide checks another spot, even if the retreat has already broken line of sight.
+- After cancellation or leaving cover, auto-hide waits for the immediate danger to clear before starting another retreat.
+
 ## 2.0.4
 
 - Auto-walk gives a blocking door leaf time to finish opening before looking for another route.

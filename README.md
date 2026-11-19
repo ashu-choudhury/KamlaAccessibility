@@ -21,8 +21,8 @@ See [CHANGELOG.md](CHANGELOG.md) for changes by version. A continuous screen-rea
   - Press `Enter` to activate nearby items, open/close doors, drawers, or wardrobes.
   - When multiple interactables are nearby, pressing `Enter` opens an accessible audio menu (*"Press 1 for Key, Press 2 for Matches..."*). Press number keys `1`–`9` to choose.
 - **Automatic Hiding**:
-  - When Kamla starts chasing, the mod searches for a nearby hiding entrance with a walkable route and uses the game's sprint and hiding controls. Normal stamina, obstacles, and hiding conditions apply.
-  - Take over with your movement controls or press `Delete` to cancel. Automatic hiding waits for the next chase after cancellation.
+  - When Kamla is close and unobstructed on the same floor, or starts chasing, the mod uses the game's sprint and hiding controls to reach cover. Normal stamina, obstacles, and hiding conditions apply.
+  - Take over with your movement controls or press `Delete` to cancel. Automatic hiding will resume when she gets clear and approaches again.
   - To turn it off, set `AutomaticHiding` to `false` under `[KamlaAccessibility]` in `UserData\MelonPreferences.cfg` while the game is closed.
 - **Lives and Kamla Location**:
   - `L` reports remaining lives. `K` reports Kamla's distance and clock direction, including whether she's above or below you when relevant.

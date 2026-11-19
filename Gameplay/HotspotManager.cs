@@ -203,7 +203,9 @@ namespace KamlaAccessibility.Gameplay
         private float _stuckTimer;
         private float _hideEntryTimer;
         private bool _retriedBlockedPath;
-        private bool _handledChase;
+        private bool _handledThreat;
+        private bool _retryHiding;
+        private bool _failedNearbyCoverSearch;
         private readonly HashSet<int> _triedHidingSpots = new HashSet<int>();
         private PlayerMovement _routePlayer;
         private TPScript _hideDestination;
@@ -258,36 +260,54 @@ namespace KamlaAccessibility.Gameplay
 
             var input = PlayerInputManager.Instance;
             bool manualMove = (input != null && input.MoveInput.sqrMagnitude > 0.04f) || Input.GetKeyDown(KeyCode.Space);
+            UpdateWalking(player, manualMove, Input.GetKeyDown(KeyCode.Delete));
+        }
+
+        private void UpdateWalking(PlayerMovement player, bool manualMove, bool delete)
+        {
             if (manualMove) _arrivedTarget = null;
             var enemy = player.enemyRef;
-            bool chasing = enemy != null && enemy.isActiveAndEnabled && enemy.IsChasing;
-            if (!chasing && _hideDestination == null)
+            if (manualMove || delete || !ModConfig.AutomaticHiding || enemy == null || !enemy.isActiveAndEnabled)
+                _retryHiding = false;
+            bool threatened = ModConfig.AutomaticHiding && HidingController.IsThreatNearby(player, enemy, _handledThreat);
+            if (!threatened && !_retryHiding && _hideDestination == null)
             {
-                _handledChase = false;
+                _handledThreat = false;
+                _failedNearbyCoverSearch = false;
                 _triedHidingSpots.Clear();
             }
 
-            bool delete = Input.GetKeyDown(KeyCode.Delete);
+            if (threatened && enemy.IsChasing && _failedNearbyCoverSearch)
+            {
+                _handledThreat = false;
+                _failedNearbyCoverSearch = false;
+            }
+
             if (IsAutoWalking && (delete || manualMove))
             {
+                bool takingOverFromHiding = _hideDestination != null;
                 StopAutoWalk("Auto-walk cancelled.");
-                _handledChase = chasing;
+                if (takingOverFromHiding) _handledThreat = threatened;
                 return;
             }
 
-            if (chasing && !_handledChase && !manualMove && ModConfig.AutomaticHiding)
+            if ((_retryHiding || threatened && !_handledThreat) && !manualMove && player.CanInteract)
             {
-                _handledChase = true;
+                _handledThreat = true;
+                string warning = _retryHiding ? "Trying another hiding spot." :
+                    enemy.IsChasing ? "Kamla is chasing you." : "Kamla is close.";
+                _retryHiding = false;
                 if (HidingController.TryFindRoute(player, _triedHidingSpots, out var spot, out var route))
                 {
                     _triedHidingSpots.Add(spot.GetInstanceID());
                     var target = new HotspotItem(spot.gameObject, HidingController.GetName(spot), HotspotCategory.HidingSpots, spot.BPoint);
                     BeginRoute(player, target, route, spot);
-                    PrismSpeechProvider.Speak($"Kamla is chasing you. Heading for {target.CleanName}.", true);
+                    PrismSpeechProvider.Speak($"{warning} Heading for {target.CleanName}.", true);
                 }
                 else
                 {
-                    PrismSpeechProvider.Speak("Kamla is chasing you. No reachable hiding spot nearby.", true);
+                    _failedNearbyCoverSearch = !enemy.IsChasing;
+                    PrismSpeechProvider.Speak($"{warning} No reachable hiding spot nearby.", true);
                 }
             }
             else if (delete)
@@ -464,6 +484,13 @@ namespace KamlaAccessibility.Gameplay
                 FailRoute("The target is no longer available.");
                 return;
             }
+            if (_hideDestination != null && _hideDestination.IsNear &&
+                (_hideDestination.isRayLooking || PuzzleAccessibility.CanReach(player, _hideDestination.gameObject, 2f)) &&
+                HidingController.TryEnter(player, _hideDestination))
+            {
+                OnHidingEntered();
+                return;
+            }
             if (!_passingGate && _hideDestination == null && NavigationHelper.IsAtInteraction(player, _targetItem))
             {
                 ArriveAtTarget(player, _targetItem);
@@ -519,7 +546,7 @@ namespace KamlaAccessibility.Gameplay
                 }
                 else if (HidingController.TryEnter(player, _hideDestination))
                 {
-                    StopAutoWalk("Hidden. Press Enter to leave cover when the area is clear.");
+                    OnHidingEntered();
                 }
                 else
                 {
@@ -640,14 +667,16 @@ namespace KamlaAccessibility.Gameplay
         private void FailRoute(string message)
         {
             if (_hideDestination != null && _triedHidingSpots.Count < 3)
-                _handledChase = false;
+                _retryHiding = true;
             StopAutoWalk(message);
         }
 
         public void ResetScene()
         {
             StopAutoWalk();
-            _handledChase = false;
+            _handledThreat = false;
+            _retryHiding = false;
+            _failedNearbyCoverSearch = false;
             _triedHidingSpots.Clear();
             _blockedDirection = Vector3.zero;
             _selectedItem = null;
@@ -670,6 +699,12 @@ namespace KamlaAccessibility.Gameplay
                 AudioCueGenerator.PlayNavSelect();
                 PrismSpeechProvider.Speak(message, true);
             }
+        }
+
+        internal void OnHidingEntered()
+        {
+            if (IsAutoWalking)
+                StopAutoWalk(_hideDestination != null ? "Hidden. Press Enter to leave cover when the area is clear." : null);
         }
         private void TryAddHotspot(GameObject go, string cleanName, HotspotCategory cat, Vector3 playerPos,
             HashSet<int> seenObjects, Transform approachPoint = null, bool isClue = false)
