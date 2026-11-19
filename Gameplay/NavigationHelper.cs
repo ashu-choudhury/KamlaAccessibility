@@ -185,6 +185,9 @@ namespace KamlaAccessibility.Gameplay
                 return altar.isNear && PuzzleAccessibility.CanReach(player, target, 3f);
             if (target.GetComponent<FootstepSmudgeStick>() is { } trail && trail != null)
                 return trail.isActive && trail.isNear && PuzzleAccessibility.CanReach(player, target, 3f);
+            if (target.GetComponent<ItemInCourtyard>() is { } offering && offering != null)
+                return (offering.isActivated || offering.isCompleted || offering.isItemPlaced) &&
+                       PuzzleAccessibility.CanReach(player, target, 3f);
             Vector3 position = player.transform.position;
             Vector3 eyes = player.mainCam != null ? player.mainCam.transform.position : position;
             if (!IsInteractionApproach(player, item, position, eyes)) return false;
@@ -207,6 +210,9 @@ namespace KamlaAccessibility.Gameplay
             if (item.IsClue) return PuzzleAccessibility.CanReachFrom(player, item.GameObject, position, eyes, 2.75f);
             if (item.GameObject.GetComponent<ColliderForCryingEvent>() != null && item.InteractionCollider != null)
                 return item.InteractionCollider.bounds.Contains(position);
+            if (item.GameObject.GetComponent<ItemInCourtyard>() != null && item.InteractionCollider != null)
+                return item.InteractionCollider.bounds.Contains(position) &&
+                       PuzzleAccessibility.CanReachFrom(player, item.GameObject, position, eyes, 3f);
             if (item.ApproachPoint != null && item.GameObject.GetComponent<FootstepSmudgeStick>() != null)
                 return Flat(item.Position - position).sqrMagnitude <= 0.7f * 0.7f &&
                        Mathf.Abs(item.Position.y - position.y) < 2.1f;

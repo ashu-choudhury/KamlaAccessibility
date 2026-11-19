@@ -197,6 +197,7 @@ namespace KamlaAccessibility.Gameplay
 
         private HotspotItem _targetItem;
         private List<Vector3> _waypoints;
+        private Vector3 _plannedTargetPosition;
         private int _currentWaypointIndex;
         private Vector3 _lastRecordedPos;
         private float _stuckTimer;
@@ -411,6 +412,7 @@ namespace KamlaAccessibility.Gameplay
             _routePlayer = player;
             _targetItem = target;
             _waypoints = route;
+            _plannedTargetPosition = target.Position;
             _hideDestination = hideDestination;
             _currentWaypointIndex = 0;
             _lastRecordedPos = player.transform.position;
@@ -454,6 +456,23 @@ namespace KamlaAccessibility.Gameplay
             Vector3 position = player.transform.position;
             Vector3 feet = NavigationHelper.GetFeet(controller);
             _routeInput = Vector2.zero;
+            if ((_targetItem.Position - _plannedTargetPosition).sqrMagnitude > 0.75f * 0.75f &&
+                _targetItem.GameObject.GetComponent<ItemPicker>() != null)
+            {
+                if (!NavigationHelper.TryFindPath(player, _targetItem, out var updatedRoute))
+                {
+                    FailRoute($"{_targetItem.CleanName} moved. No walkable route to its new location. Press Delete to retry.");
+                    return;
+                }
+
+                _waypoints = updatedRoute;
+                _currentWaypointIndex = 0;
+                _plannedTargetPosition = _targetItem.Position;
+                _lastRecordedPos = position;
+                _stuckTimer = 0f;
+                _retriedBlockedPath = false;
+                _failedApproach = null;
+            }
             const float finalTolerance = 0.12f;
 
             while (_currentWaypointIndex < _waypoints.Count)
@@ -784,16 +803,6 @@ namespace KamlaAccessibility.Gameplay
                         }
                     }
 
-                    // 5. ItemInCourtyard
-                    var courtItems = UnityEngine.Object.FindObjectsOfType<ItemInCourtyard>(true);
-                    foreach (var ci in courtItems)
-                    {
-                        if (ci != null)
-                        {
-                            string rName = FormatRecipeItem(ci.MyItem);
-                            TryAddHotspot(ci.gameObject, rName, HotspotCategory.Items, playerPos, seenObjects);
-                        }
-                    }
                     break;
 
                 case HotspotCategory.Containers:
@@ -829,6 +838,9 @@ namespace KamlaAccessibility.Gameplay
                 case HotspotCategory.RitualAndPuzzles:
                     foreach (var court in UnityEngine.Object.FindObjectsOfType<CourtYardMechanic>())
                         TryAddHotspot(court.gameObject, "Courtyard ritual altar", category, playerPos, seenObjects);
+                    foreach (var circle in UnityEngine.Object.FindObjectsOfType<ItemInCourtyard>())
+                        TryAddHotspot(circle.gameObject, $"{FormatRecipeItem(circle.MyItem)} offering circle",
+                            category, playerPos, seenObjects);
                     foreach (var altar in UnityEngine.Object.FindObjectsOfType<GaneshMurtiManager>())
                         TryAddHotspot(altar.gameObject, "Ganesh altar", category, playerPos, seenObjects);
                     foreach (var encounter in UnityEngine.Object.FindObjectsOfType<ColliderForCryingEvent>())

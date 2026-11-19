@@ -1,5 +1,12 @@
 # Kamla Accessibility Mod changelog
 
+## 2.0.3
+
+- Auto-walk recalculates the route when the selected pickup moves while the player is on the way.
+- Auto-walk checks the game's offering-circle trigger before announcing arrival. Offering circles have distinct names under Ritual and Puzzles.
+
+The continuous background run entered the Haveli and placed the salt bowl and prayer plate. A later chase interrupted the route to the key book. Route recovery after some respawns, access to the statue clues, and the ending still need verification.
+
 ## 2.0.2
 
 - Enter can recover a stale interaction lock after the player has settled inside a hiding spot and use the game's normal exit. K still reports Kamla's location while hidden.
