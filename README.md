@@ -70,7 +70,7 @@ See [CHANGELOG.md](CHANGELOG.md) for changes by version. A continuous screen-rea
 - Browse **Ritual and Puzzles** to find nearby puzzle objects and revealed clues. In the suitcase, type the combination on the number row or number pad, then press Enter to dial it. Backspace corrects a digit. Left and Right still select a wheel, Up and Down turn it, and Escape leaves. Hold Enter when prompted for the handpump or ritual placement. The footstep puzzle announces the game's visible clue meter.
 - In the Outer Area, the **Handpump** and **Fire** hotspots report the puzzle state. After placing the **Steel water pot** at the pump, hold Enter to fill it. Use the pump action again to pick up the filled pot. After the first pour, refill it for the second.
 - At the **Courtyard ritual altar**, choose **Check ritual progress** to hear the remaining offerings. The action changes to **Begin the final ritual** when the game makes it available.
-- When the game's footstep cue becomes active, the mod announces its direction. Use F5 to repeat it. Follow the spoken strength readings and choose **Reveal the Kalash pot** when within reach.
+- While carrying the smudge stick, press Enter and choose **Follow the footstep trail** to try auto-walk. F5 repeats the cue's direction and distance for manual movement. Choose **Reveal the Kalash pot** when within reach.
 - F3 affects automatic narration. Menus, explicit inspection, puzzle control feedback, and obstacle warnings remain available.
 
 Kamla's warning sound is adapted from `bong_001.ogg` in Kenney's [Interface Sounds](https://opengameart.org/content/interface-sounds), released under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).

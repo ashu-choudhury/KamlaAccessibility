@@ -215,6 +215,7 @@ namespace KamlaAccessibility.Gameplay
         private GameObject _arrivedTarget;
         private bool _passingGate;
         private float _gateWaitUntil;
+        private float _blockedDoorWaitUntil;
 
         internal GameObject ArrivedTarget => _arrivedTarget;
 
@@ -407,6 +408,22 @@ namespace KamlaAccessibility.Gameplay
             PrismSpeechProvider.Speak($"Walking to {target.CleanName}. First direction, {clock} o'clock.", true);
         }
 
+        internal void FollowFootsteps(PlayerMovement player, FootstepSmudgeStick trail)
+        {
+            var source = trail.footstepMan?.footstepAudioSource;
+            if (trail.isNear || !player.IsHavingItem || source == null ||
+                !source.activeInHierarchy || !trail.footstepMan.isSoundActive)
+            {
+                PrismSpeechProvider.Speak("The footstep trail is unavailable right now.", true);
+                return;
+            }
+
+            _selectedItem = new HotspotItem(trail.gameObject, "Footstep trail", HotspotCategory.RitualAndPuzzles,
+                source.transform);
+            StartAutoWalk(player);
+            if (!IsAutoWalking) PrismSpeechProvider.Speak(PuzzleAccessibility.DescribeFootsteps(player), false);
+        }
+
         private void BeginRoute(PlayerMovement player, HotspotItem target, List<Vector3> route, TPScript hideDestination = null)
         {
             _routePlayer = player;
@@ -417,6 +434,7 @@ namespace KamlaAccessibility.Gameplay
             _currentWaypointIndex = 0;
             _lastRecordedPos = player.transform.position;
             _stuckTimer = 0f;
+            _blockedDoorWaitUntil = 0f;
             _hideEntryTimer = 0f;
             _retriedBlockedPath = false;
             _failedApproach = null;
@@ -470,6 +488,7 @@ namespace KamlaAccessibility.Gameplay
                 _plannedTargetPosition = _targetItem.Position;
                 _lastRecordedPos = position;
                 _stuckTimer = 0f;
+                _blockedDoorWaitUntil = 0f;
                 _retriedBlockedPath = false;
                 _failedApproach = null;
             }
@@ -528,6 +547,7 @@ namespace KamlaAccessibility.Gameplay
             _stuckTimer = 0f;
             if (moved >= (_hideDestination != null ? 0.12f : 0.18f))
             {
+                _blockedDoorWaitUntil = 0f;
                 _retriedBlockedPath = false;
                 return;
             }
@@ -539,7 +559,13 @@ namespace KamlaAccessibility.Gameplay
 
             if (!_passingGate && !_retriedBlockedPath)
             {
-                if (direction.sqrMagnitude > 0.001f && NavigationHelper.TryOpenBlockingDoor(player, direction.normalized)) return;
+                if (direction.sqrMagnitude > 0.001f &&
+                    (_blockedDoorWaitUntil == 0f || Time.unscaledTime < _blockedDoorWaitUntil) &&
+                    NavigationHelper.TryOpenBlockingDoor(player, direction.normalized))
+                {
+                    if (_blockedDoorWaitUntil == 0f) _blockedDoorWaitUntil = Time.unscaledTime + 2f;
+                    return;
+                }
                 _retriedBlockedPath = true;
 
                 List<Vector3> route = null;
@@ -589,8 +615,12 @@ namespace KamlaAccessibility.Gameplay
                 StopAutoWalk("The crying encounter has started.");
                 return;
             }
-            Vector3 face = NavigationHelper.Flat(target.Position - player.transform.position);
-            if (face.sqrMagnitude > 0.01f) player.transform.rotation = Quaternion.LookRotation(face);
+            // Turning the camera can move the carried smudge stick out of the reveal area.
+            if (target.GameObject.GetComponent<FootstepSmudgeStick>() == null)
+            {
+                Vector3 face = NavigationHelper.Flat(target.Position - player.transform.position);
+                if (face.sqrMagnitude > 0.01f) player.transform.rotation = Quaternion.LookRotation(face);
+            }
             StopAutoWalk($"At {target.CleanName}. Press Enter to {(target.IsClue ? "read it" : "use it")}.");
             _arrivedTarget = target.GameObject;
         }

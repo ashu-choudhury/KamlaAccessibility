@@ -397,11 +397,13 @@ namespace KamlaAccessibility.Gameplay
                 Say("Hold Enter to place the item. Escape cancels.");
             });
             AddNearby<FootstepSmudgeStick>(player, options,
-                trail => trail.isNear ? "Reveal the Kalash pot" : "Listen for footsteps", trail =>
+                trail => trail.isNear ? "Reveal the Kalash pot" :
+                    player.IsHavingItem && trail.footstepMan != null && trail.footstepMan.isSoundActive
+                        ? "Follow the footstep trail" : "Listen for footsteps", trail =>
             {
-                if (!trail.isActive) { Say("Bring the smudge stick to start the footstep clue."); return; }
                 if (trail.isNear)
                 {
+                    if (!trail.isActive) { Say("Bring the smudge stick to start the footstep clue."); return; }
                     if (!player.IsHavingItem || player.ItemContainer == null || player.ItemContainer.childCount == 0)
                     {
                         Say("Carry the smudge stick to the end of the footstep trail.");
@@ -412,7 +414,9 @@ namespace KamlaAccessibility.Gameplay
                         trail.footstepMan.kalashPot.activeInHierarchy) Say("Kalash pot revealed. Refresh with F5 to find it.");
                     return;
                 }
-                Say(DescribeFootsteps(player) ?? "Move around with the lit smudge stick and listen for a change in the footstep clue.");
+                if (DescribeFootsteps(player) != null)
+                    AccessibilityCoordinator.Instance?.Hotspots.FollowFootsteps(player, trail);
+                else Say("Move around with the lit smudge stick and listen for a change in the footstep clue.");
             });
             AddNearby<FootstepKey>(player, options, "Collect the footstep key", key => WithInteract(key.Update, key));
             AddNearby<Handpump>(player, options, "Use handpump", pump =>

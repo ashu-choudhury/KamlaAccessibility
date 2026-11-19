@@ -1,5 +1,12 @@
 # Kamla Accessibility Mod changelog
 
+## 2.0.4
+
+- Auto-walk gives a blocking door leaf time to finish opening before looking for another route.
+- While carrying the smudge stick, choose **Follow the footstep trail** to walk toward the active footstep cue. If no route is available, the mod repeats its direction and distance.
+- Auto-walk checks the game's Kalash reveal state and gets the player close to the cue before announcing arrival.
+- Animated subtitles speak as complete lines after the text settles. Prompts and gameplay alerts keep their usual timing.
+
 ## 2.0.3
 
 - Auto-walk recalculates the route when the selected pickup moves while the player is on the way.

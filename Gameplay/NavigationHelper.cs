@@ -11,6 +11,7 @@ namespace KamlaAccessibility.Gameplay
     public static class NavigationHelper
     {
         private const float WaypointSpacing = 0.45f;
+        private const float FootstepApproachDistanceSquared = 0.7f * 0.7f;
         private static Il2CppStructArray<RaycastHit> _capsuleHits;
 
         public static bool TryFindPath(PlayerMovement player, Vector3 target, float stopDistance, out List<Vector3> waypoints)
@@ -184,7 +185,9 @@ namespace KamlaAccessibility.Gameplay
             if (target.GetComponent<CourtYardMechanic>() is { } altar && altar != null)
                 return altar.isNear && PuzzleAccessibility.CanReach(player, target, 3f);
             if (target.GetComponent<FootstepSmudgeStick>() is { } trail && trail != null)
-                return trail.isActive && trail.isNear && PuzzleAccessibility.CanReach(player, target, 3f);
+                return trail.isActive && trail.isNear &&
+                       (item.ApproachPoint == null || Flat(item.Position - player.transform.position).sqrMagnitude <= FootstepApproachDistanceSquared) &&
+                       PuzzleAccessibility.CanReach(player, target, 3f);
             if (target.GetComponent<ItemInCourtyard>() is { } offering && offering != null)
                 return (offering.isActivated || offering.isCompleted || offering.isItemPlaced) &&
                        PuzzleAccessibility.CanReach(player, target, 3f);
@@ -214,7 +217,7 @@ namespace KamlaAccessibility.Gameplay
                 return item.InteractionCollider.bounds.Contains(position) &&
                        PuzzleAccessibility.CanReachFrom(player, item.GameObject, position, eyes, 3f);
             if (item.ApproachPoint != null && item.GameObject.GetComponent<FootstepSmudgeStick>() != null)
-                return Flat(item.Position - position).sqrMagnitude <= 0.7f * 0.7f &&
+                return Flat(item.Position - position).sqrMagnitude <= FootstepApproachDistanceSquared &&
                        Mathf.Abs(item.Position.y - position.y) < 2.1f;
             Vector3 point = item.InteractionCollider != null && !item.InteractionCollider.isTrigger
                 ? item.InteractionCollider.bounds.ClosestPoint(position) : item.Position;
@@ -530,15 +533,18 @@ namespace KamlaAccessibility.Gameplay
             var scriptDoor = nearest != null ? nearest.GetComponentInParent<DoorScriptCode>() : null;
             if (scriptDoor == null)
                 scriptDoor = FindDoorInStep(player, direction, nearest);
-            if (scriptDoor != null && scriptDoor.isActiveAndEnabled && !scriptDoor.open && !scriptDoor.isDoorOpening)
+            if (scriptDoor != null && scriptDoor.isActiveAndEnabled)
             {
-                return TryToggleDoor(scriptDoor);
+                // The moving leaf can still block the capsule after the open flag changes.
+                if (scriptDoor.isDoorOpening) return true;
+                if (!scriptDoor.open) return TryToggleDoor(scriptDoor);
             }
             if (nearest == null) return false;
             var door = nearest.GetComponentInParent<Door>();
-            if (door != null && door.isActiveAndEnabled && !door.isOpen && !door.isOpening)
+            if (door != null && door.isActiveAndEnabled)
             {
-                return TryToggleDoor(door);
+                if (door.isOpening) return true;
+                if (!door.isOpen) return TryToggleDoor(door);
             }
             return false;
         }
@@ -547,7 +553,7 @@ namespace KamlaAccessibility.Gameplay
         {
             bool wasOpen = door.open;
             PuzzleAccessibility.WithInteract(door.playerDoorOpen);
-            return door.open != wasOpen;
+            return door.open != wasOpen || door.isDoorOpening;
         }
 
         internal static bool TryToggleDoor(Door door)

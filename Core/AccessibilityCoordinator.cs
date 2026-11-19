@@ -51,6 +51,7 @@ namespace KamlaAccessibility.Core
 
                 // 2. Global Hotkeys
                 HandleGlobalHotkeys();
+                SubtitleReader.Update();
 
                 // 3. UI Navigation (Menus, Pause, Settings)
                 if (!_puzzles.IsModalActive && !_interactionManager.IsMenuActive) _uiController.Update();
@@ -127,6 +128,7 @@ namespace KamlaAccessibility.Core
             // Left or Right Control: Silence Speech
             if (Input.GetKeyDown(KeyCode.LeftControl) || Input.GetKeyDown(KeyCode.RightControl))
             {
+                SubtitleReader.ClearPendingDialogue();
                 PrismSpeechProvider.Stop();
             }
 
